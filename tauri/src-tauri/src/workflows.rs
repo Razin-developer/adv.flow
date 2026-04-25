@@ -463,6 +463,304 @@ fn normalize_generated_workflow(mut workflow: Workflow, prompt: &str, directory:
     workflow
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct DetectedPackage {
+    rel_path: String,
+    abs_path: String,
+    name: Option<String>,
+    dev_command: String,
+    role_hint: String,
+    likely_port: Option<u16>,
+}
+
+fn detect_role_and_port(pkg: &Value, folder_name: &str, dev_script: &str) -> (String, Option<u16>) {
+    let mut deps: Vec<String> = Vec::new();
+    for key in ["dependencies", "devDependencies", "peerDependencies"] {
+        if let Some(map) = pkg.get(key).and_then(|value| value.as_object()) {
+            for name in map.keys() {
+                deps.push(name.to_lowercase());
+            }
+        }
+    }
+    let has = |name: &str| deps.iter().any(|dep| dep == name);
+
+    let frontend_markers = ["react", "vite", "next", "vue", "svelte", "@angular/core", "solid-js"];
+    let backend_markers = ["express", "fastify", "koa", "@nestjs/core", "hapi", "@hapi/hapi"];
+
+    let mut role = "unknown".to_string();
+    if frontend_markers.iter().any(|marker| has(marker)) {
+        role = "frontend".to_string();
+    } else if backend_markers.iter().any(|marker| has(marker)) {
+        role = "backend".to_string();
+    } else {
+        let lower = folder_name.to_lowercase();
+        if ["client", "web", "frontend", "ui", "app"].iter().any(|name| lower == *name) {
+            role = "frontend".to_string();
+        } else if ["server", "api", "backend"].iter().any(|name| lower == *name) {
+            role = "backend".to_string();
+        }
+    }
+
+    let mut port: Option<u16> = None;
+    let parse = |needle: &str, sep: char, hay: &str| -> Option<u16> {
+        hay.find(needle).and_then(|idx| {
+            let rest = &hay[idx + needle.len()..];
+            let rest = rest.trim_start_matches(sep);
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            digits.parse().ok()
+        })
+    };
+    port = port
+        .or_else(|| parse("--port=", '=', dev_script))
+        .or_else(|| parse("--port ", ' ', dev_script))
+        .or_else(|| parse("-p ", ' ', dev_script))
+        .or_else(|| parse("PORT=", '=', dev_script));
+
+    if port.is_none() && role == "frontend" {
+        if has("next") {
+            port = Some(3000);
+        } else if has("vite") {
+            port = Some(5173);
+        } else if has("react-scripts") {
+            port = Some(3000);
+        } else if has("@angular/core") {
+            port = Some(4200);
+        }
+    }
+
+    (role, port)
+}
+
+fn read_package(path: &Path, root: &Path) -> Option<DetectedPackage> {
+    let raw = fs::read_to_string(path).ok()?;
+    let pkg: Value = serde_json::from_str(&raw).ok()?;
+    let scripts = pkg.get("scripts").and_then(|value| value.as_object());
+
+    let chosen_script = ["dev", "develop", "start", "serve"]
+        .iter()
+        .find(|name| {
+            scripts
+                .map(|map| map.contains_key(**name))
+                .unwrap_or(false)
+        })
+        .map(|name| name.to_string());
+
+    let dev_script_value = chosen_script
+        .as_ref()
+        .and_then(|name| scripts.and_then(|map| map.get(name)))
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let dev_command = match chosen_script.as_deref() {
+        Some("start") => "npm start".to_string(),
+        Some(name) => format!("npm run {name}"),
+        None => "npm install".to_string(),
+    };
+
+    let dir = path.parent()?;
+    let rel_path = dir
+        .strip_prefix(root)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default();
+    let folder_name = dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    let (role, port) = detect_role_and_port(&pkg, &folder_name, &dev_script_value);
+
+    Some(DetectedPackage {
+        rel_path,
+        abs_path: dir.to_string_lossy().to_string(),
+        name: pkg
+            .get("name")
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string()),
+        dev_command,
+        role_hint: role,
+        likely_port: port,
+    })
+}
+
+fn scan_project(root: &Path) -> Vec<DetectedPackage> {
+    fn skip(name: &str) -> bool {
+        matches!(
+            name,
+            "node_modules"
+                | "dist"
+                | "build"
+                | ".git"
+                | ".next"
+                | ".turbo"
+                | ".cache"
+                | "target"
+                | "out"
+                | "coverage"
+        )
+    }
+
+    fn walk(dir: &Path, root: &Path, depth: usize, found: &mut Vec<DetectedPackage>) {
+        if depth > 3 || found.len() > 8 {
+            return;
+        }
+        let pkg_path = dir.join("package.json");
+        if pkg_path.is_file() {
+            if let Some(pkg) = read_package(&pkg_path, root) {
+                found.push(pkg);
+            }
+        }
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            if name.starts_with('.') || skip(name) {
+                continue;
+            }
+            walk(&path, root, depth + 1, found);
+        }
+    }
+
+    let mut found = Vec::new();
+    walk(root, root, 0, &mut found);
+    found
+}
+
+fn scan_summary(packages: &[DetectedPackage]) -> String {
+    let mut lines = Vec::new();
+    for (idx, pkg) in packages.iter().enumerate() {
+        let rel = if pkg.rel_path.is_empty() {
+            ".".to_string()
+        } else {
+            pkg.rel_path.clone()
+        };
+        let port = pkg
+            .likely_port
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none".to_string());
+        let name = pkg.name.clone().unwrap_or_else(|| "unnamed".to_string());
+        lines.push(format!(
+            "  {}. relPath={} | role={} | name={} | devCommand=\"{}\" | absPath={} | likelyPort={}",
+            idx + 1,
+            rel,
+            pkg.role_hint,
+            name,
+            pkg.dev_command,
+            pkg.abs_path.replace('\\', "\\\\"),
+            port
+        ));
+    }
+    lines.join("\n")
+}
+
+#[allow(dead_code)]
+fn workflow_generation_prompt_with_scan(
+    prompt: &str,
+    directory: &str,
+    app: &InstalledApp,
+    packages: &[DetectedPackage],
+    preferred_browser: &str,
+) -> String {
+    let frontend_port = packages
+        .iter()
+        .find(|pkg| pkg.role_hint == "frontend" && pkg.likely_port.is_some())
+        .and_then(|pkg| pkg.likely_port)
+        .or_else(|| {
+            packages
+                .iter()
+                .find_map(|pkg| pkg.likely_port)
+        });
+    let frontend_url = frontend_port
+        .map(|port| format!("http://localhost:{port}"))
+        .unwrap_or_else(|| "http://localhost:3000".to_string());
+    let summary = scan_summary(packages);
+    let user_hint = if prompt.trim().is_empty() {
+        "Set up the project so I can start developing immediately.".to_string()
+    } else {
+        prompt.to_string()
+    };
+
+    format!(
+        r#"Create one Advflow workflow as strict JSON only. No markdown.
+
+Use this TypeScript shape:
+{{
+  "name": "string",
+  "description": "string",
+  "favorite": false,
+  "tags": ["ai", "gemini", "from-folder"],
+  "nodes": [
+    {{
+      "id": "node_open_app",
+      "type": "openApp",
+      "position": {{ "x": 80, "y": 80 }},
+      "data": {{
+        "id": "node_open_app",
+        "type": "openApp",
+        "label": "Open editor",
+        "appId": "{app_id}",
+        "appName": "{app_name}",
+        "command": "{command}",
+        "args": {args},
+        "appPath": {app_path},
+        "source": "{source}",
+        "folderPath": "{directory}"
+      }}
+    }}
+  ],
+  "edges": [{{ "id": "edge_id", "source": "node_a", "target": "node_b", "animated": true }}]
+}}
+
+Allowed node data types:
+openApp: appId, appName, command, args, appPath, source, folderPath, label.
+runCommand: command, workingDirectory, terminalType ("background" or "newWindow"), shellType ("powershell" or "cmd"), label.
+openBrowser: url, browser ("chrome", "edge", "brave", "comet"), waitMode ("delay" or "waitForServer"), delay, label.
+delay: delay, waitUrl, label.
+
+Project structure (scanned package.json files under "{directory}"):
+{summary}
+
+Strict rules:
+- First node MUST be the openApp node above (open the project root in the editor).
+- For EACH detected package above, emit ONE runCommand node:
+    * workingDirectory = the package's absPath (use double-backslash on Windows paths exactly as shown).
+    * command = the package's devCommand.
+    * terminalType = "newWindow", shellType = "powershell".
+    * label = "Run <role>: <relPath or name>".
+- If at least one package has role=frontend, add ONE openBrowser node AFTER all runCommand nodes:
+    * url = "{frontend_url}".
+    * browser = "{preferred_browser}".
+    * waitMode = "waitForServer", delay = 30000.
+    * label = "Open in browser".
+- End with ONE delay node: label = "Ready", delay = 500.
+- Connect nodes top-to-bottom with edges, all animated: true. Each edge: {{ "id": "edge_<n>", "source": "<prev_id>", "target": "<next_id>", "animated": true }}.
+- Lay out node positions vertically: x=80, y=80, 180, 280, ... (step 100).
+- Keep IDs simple, unique, snake_case.
+- Return valid JSON only.
+
+User hint: {user_hint}"#,
+        app_id = app.id,
+        app_name = app.name.replace('"', "'"),
+        command = app.command.replace('"', "'"),
+        args = serde_json::to_string(&app.args).unwrap_or_else(|_| "[]".to_string()),
+        app_path = serde_json::to_string(&app.path).unwrap_or_else(|_| "null".to_string()),
+        source = app.source,
+        directory = directory.replace('\\', "\\\\").replace('"', "'"),
+        summary = summary,
+        frontend_url = frontend_url,
+        preferred_browser = preferred_browser,
+        user_hint = user_hint
+    )
+}
+
 fn workflow_generation_prompt(prompt: &str, directory: &str, app: &InstalledApp) -> String {
     format!(
         r#"Create one Advflow workflow as strict JSON only. No markdown.
@@ -520,11 +818,9 @@ User prompt: {prompt}"#,
     )
 }
 
-async fn generate_workflow_with_gemini(
+async fn call_gemini_for_workflow(
     settings: &AppSettings,
-    prompt: &str,
-    directory: &str,
-    app: &InstalledApp,
+    prompt_text: String,
 ) -> Result<Workflow, String> {
     let api_key = if settings.gemini_api_key.trim().is_empty() {
         std::env::var("GEMINI_API_KEY").unwrap_or_default()
@@ -542,9 +838,7 @@ async fn generate_workflow_with_gemini(
     );
     let body = json!({
         "contents": [{
-            "parts": [{
-                "text": workflow_generation_prompt(prompt, directory, app)
-            }]
+            "parts": [{ "text": prompt_text }]
         }],
         "generationConfig": {
             "temperature": 0.2,
@@ -564,26 +858,305 @@ async fn generate_workflow_with_gemini(
         }
     });
 
+    eprintln!("\n===== Gemini request =====\nmodel: {model}\nprompt:\n{}\n===== end prompt =====\n", body["contents"][0]["parts"][0]["text"].as_str().unwrap_or(""));
+
     let client = reqwest::Client::new();
-    let response: Value = client
+    let raw = client
         .post(url)
         .header("x-goog-api-key", api_key)
         .json(&body)
         .send()
         .await
         .map_err(|error| format!("Gemini request failed: {error}"))?
-        .json()
+        .text()
         .await
-        .map_err(|error| format!("Gemini response was not JSON: {error}"))?;
+        .map_err(|error| format!("Gemini response read failed: {error}"))?;
+
+    eprintln!("\n===== Gemini raw response =====\n{raw}\n===== end response =====\n");
+
+    let response: Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("Gemini response was not JSON: {error} | body: {raw}"))?;
 
     let text = response
         .pointer("/candidates/0/content/parts/0/text")
         .and_then(|value| value.as_str())
         .ok_or_else(|| format!("Gemini did not return workflow JSON: {response}"))?;
-    let workflow: Workflow = serde_json::from_str(text)
-        .map_err(|error| format!("Gemini returned invalid workflow JSON: {error}"))?;
 
+    eprintln!("\n===== Gemini workflow JSON =====\n{text}\n===== end workflow JSON =====\n");
+
+    serde_json::from_str(text)
+        .map_err(|error| format!("Gemini returned invalid workflow JSON: {error} | text: {text}"))
+}
+
+async fn generate_workflow_with_gemini(
+    settings: &AppSettings,
+    prompt: &str,
+    directory: &str,
+    app: &InstalledApp,
+) -> Result<Workflow, String> {
+    let workflow = call_gemini_for_workflow(
+        settings,
+        workflow_generation_prompt(prompt, directory, app),
+    )
+    .await?;
     Ok(normalize_generated_workflow(workflow, prompt, directory))
+}
+
+fn build_workflow_from_scan(
+    directory: &str,
+    app: &InstalledApp,
+    packages: &[DetectedPackage],
+    preferred_browser: &str,
+    name_hint: Option<String>,
+    description_hint: Option<String>,
+) -> Workflow {
+    let mut nodes: Vec<Value> = Vec::new();
+    let mut edges: Vec<Value> = Vec::new();
+    let mut prev_id: Option<String> = None;
+    let mut y: i32 = 80;
+    let step: i32 = 110;
+    let x: i32 = 80;
+
+    let push_edge = |edges: &mut Vec<Value>, prev: &Option<String>, next: &str| {
+        if let Some(prev_id) = prev {
+            edges.push(json!({
+                "id": format!("edge_{}_{}", prev_id, next),
+                "source": prev_id,
+                "target": next,
+                "animated": true,
+            }));
+        }
+    };
+
+    let editor_id = "node_open_editor".to_string();
+    nodes.push(json!({
+        "id": editor_id,
+        "type": "openApp",
+        "position": { "x": x, "y": y },
+        "data": {
+            "id": editor_id,
+            "type": "openApp",
+            "label": format!("Open {} at project root", app.name),
+            "appId": app.id,
+            "appName": app.name,
+            "command": app.command,
+            "args": app.args,
+            "appPath": app.path,
+            "source": app.source,
+            "folderPath": directory,
+        },
+    }));
+    prev_id = Some(editor_id);
+    y += step;
+
+    for (idx, pkg) in packages.iter().enumerate() {
+        let id = format!("node_run_{}", idx + 1);
+        let label_path = if pkg.rel_path.is_empty() { ".".to_string() } else { pkg.rel_path.clone() };
+        let label = format!(
+            "Run {} ({})",
+            pkg.role_hint,
+            pkg.name.clone().unwrap_or(label_path),
+        );
+        nodes.push(json!({
+            "id": id,
+            "type": "runCommand",
+            "position": { "x": x, "y": y },
+            "data": {
+                "id": id,
+                "type": "runCommand",
+                "label": label,
+                "command": pkg.dev_command,
+                "workingDirectory": pkg.abs_path,
+                "terminalType": "newWindow",
+                "shellType": "powershell",
+            },
+        }));
+        push_edge(&mut edges, &prev_id, &id);
+        prev_id = Some(id);
+        y += step;
+    }
+
+    let frontend_port = packages
+        .iter()
+        .find(|pkg| pkg.role_hint == "frontend" && pkg.likely_port.is_some())
+        .and_then(|pkg| pkg.likely_port)
+        .or_else(|| packages.iter().find_map(|pkg| pkg.likely_port));
+
+    if let Some(port) = frontend_port {
+        let id = "node_open_browser".to_string();
+        nodes.push(json!({
+            "id": id,
+            "type": "openBrowser",
+            "position": { "x": x, "y": y },
+            "data": {
+                "id": id,
+                "type": "openBrowser",
+                "label": format!("Open http://localhost:{port}"),
+                "url": format!("http://localhost:{port}"),
+                "browser": preferred_browser,
+                "waitMode": "waitForServer",
+                "delay": 30000,
+            },
+        }));
+        push_edge(&mut edges, &prev_id, &id);
+        prev_id = Some(id);
+        y += step;
+    }
+
+    let ready_id = "node_ready".to_string();
+    nodes.push(json!({
+        "id": ready_id,
+        "type": "delay",
+        "position": { "x": x, "y": y },
+        "data": {
+            "id": ready_id,
+            "type": "delay",
+            "label": "Ready",
+            "delay": 500,
+        },
+    }));
+    push_edge(&mut edges, &prev_id, &ready_id);
+
+    let folder_name = Path::new(directory)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("project")
+        .to_string();
+
+    let mut workflow = Workflow {
+        id: Uuid::new_v4().to_string(),
+        name: name_hint.unwrap_or_else(|| format!("{folder_name} dev")),
+        description: description_hint.unwrap_or_else(|| {
+            format!(
+                "Open {} in {}, run {} dev script(s), open browser when server is ready.",
+                folder_name,
+                app.name,
+                packages.len()
+            )
+        }),
+        favorite: false,
+        nodes,
+        edges,
+        tags: vec!["ai".to_string(), "from-folder".to_string()],
+        created_at: timestamp(),
+        updated_at: timestamp(),
+    };
+    normalize_workflow(&mut workflow);
+    workflow
+}
+
+async fn gemini_name_and_description(
+    settings: &AppSettings,
+    directory: &str,
+    user_hint: &str,
+    packages: &[DetectedPackage],
+) -> Option<(String, String)> {
+    if settings.gemini_api_key.trim().is_empty()
+        && std::env::var("GEMINI_API_KEY").unwrap_or_default().trim().is_empty()
+    {
+        return None;
+    }
+
+    let api_key = if settings.gemini_api_key.trim().is_empty() {
+        std::env::var("GEMINI_API_KEY").unwrap_or_default()
+    } else {
+        settings.gemini_api_key.clone()
+    };
+    let model = settings.gemini_model.trim();
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    );
+
+    let summary = scan_summary(packages);
+    let prompt_text = format!(
+        r#"Pick a short workflow name and one-sentence description for an Advflow dev-startup workflow.
+
+Project folder: {directory}
+User hint: {user_hint}
+Detected packages:
+{summary}
+
+Return JSON: {{ "name": "...", "description": "..." }}"#
+    );
+
+    eprintln!("\n===== Gemini name/desc prompt =====\n{prompt_text}\n===== end =====\n");
+
+    let body = json!({
+        "contents": [{ "parts": [{ "text": prompt_text }] }],
+        "generationConfig": {
+            "temperature": 0.4,
+            "responseMimeType": "application/json",
+            "responseJsonSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "description": { "type": "string" }
+                },
+                "required": ["name", "description"]
+            }
+        }
+    });
+
+    let raw = reqwest::Client::new()
+        .post(url)
+        .header("x-goog-api-key", api_key)
+        .json(&body)
+        .send()
+        .await
+        .ok()?
+        .text()
+        .await
+        .ok()?;
+
+    eprintln!("\n===== Gemini name/desc raw response =====\n{raw}\n===== end =====\n");
+
+    let response: Value = serde_json::from_str(&raw).ok()?;
+    let text = response
+        .pointer("/candidates/0/content/parts/0/text")
+        .and_then(|value| value.as_str())?;
+    let parsed: Value = serde_json::from_str(text).ok()?;
+    let name = parsed.get("name").and_then(|value| value.as_str())?.to_string();
+    let description = parsed
+        .get("description")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .to_string();
+    if name.trim().is_empty() {
+        return None;
+    }
+    Some((name, description))
+}
+
+async fn generate_workflow_from_scan(
+    settings: &AppSettings,
+    prompt: &str,
+    directory: &str,
+    app: &InstalledApp,
+    packages: &[DetectedPackage],
+) -> Result<Workflow, String> {
+    eprintln!(
+        "\n===== Folder scan =====\ndirectory: {directory}\npackages found: {}\n{}\n===== end scan =====\n",
+        packages.len(),
+        scan_summary(packages)
+    );
+
+    let (name_hint, description_hint) = match gemini_name_and_description(
+        settings, directory, prompt, packages,
+    )
+    .await
+    {
+        Some((name, description)) => (Some(name), Some(description)),
+        None => (None, None),
+    };
+
+    Ok(build_workflow_from_scan(
+        directory,
+        app,
+        packages,
+        &settings.preferred_browser,
+        name_hint,
+        description_hint,
+    ))
 }
 
 async fn update_node_with_gemini(
@@ -951,6 +1524,46 @@ pub async fn export_all_workflows(state: State<'_, AppState>, path: String) -> R
 }
 
 #[tauri::command]
+pub async fn import_workflow(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<Workflow, String> {
+    let content = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let value: Value = serde_json::from_str(&content).map_err(|error| error.to_string())?;
+    let mut workflow: Workflow = if value.is_array() {
+        let mut list: Vec<Workflow> =
+            serde_json::from_value(value).map_err(|error| error.to_string())?;
+        if list.len() != 1 {
+            return Err(format!(
+                "File contains {} workflows. Use Import library for multi-workflow files.",
+                list.len()
+            ));
+        }
+        list.remove(0)
+    } else {
+        serde_json::from_value(value).map_err(|error| error.to_string())?
+    };
+
+    workflow.id = Uuid::new_v4().to_string();
+    workflow.created_at = timestamp();
+    workflow.updated_at = timestamp();
+    normalize_workflow(&mut workflow);
+
+    let settings = state.settings.lock().unwrap().clone();
+    if settings.storage_mode == "mongodb" {
+        save_remote_workflow(&settings, &workflow).await?;
+    } else {
+        {
+            let mut workflows = state.workflows.lock().unwrap();
+            workflows.push(workflow.clone());
+        }
+        state.save_local_workflows()?;
+    }
+
+    Ok(workflow)
+}
+
+#[tauri::command]
 pub async fn import_workflows(state: State<'_, AppState>, path: String) -> Result<usize, String> {
     let content = fs::read_to_string(path).map_err(|error| error.to_string())?;
     let value: Value = serde_json::from_str(&content).map_err(|error| error.to_string())?;
@@ -1014,6 +1627,47 @@ pub async fn generate_workflow_from_prompt(
     let app = app_from_id(&apps, &app_id);
     let settings = state.settings.lock().unwrap().clone();
     let workflow = generate_workflow_with_gemini(&settings, &prompt, &directory, &app).await?;
+
+    if settings.storage_mode == "mongodb" {
+        save_remote_workflow(&settings, &workflow).await?;
+    } else {
+        {
+            let mut workflows = state.workflows.lock().unwrap();
+            workflows.push(workflow.clone());
+        }
+        state.save_local_workflows()?;
+    }
+
+    Ok(workflow)
+}
+
+#[tauri::command]
+pub async fn generate_workflow_from_folder(
+    state: State<'_, AppState>,
+    directory: String,
+    prompt: Option<String>,
+) -> Result<Workflow, String> {
+    let directory = directory.trim().to_string();
+    if directory.is_empty() {
+        return Err("Choose a project directory first.".to_string());
+    }
+    let root = Path::new(&directory);
+    if !root.exists() || !root.is_dir() {
+        return Err(format!("Directory does not exist: {directory}"));
+    }
+
+    let packages = scan_project(root);
+    if packages.is_empty() {
+        return Err("No package.json found in this folder.".to_string());
+    }
+
+    let settings = state.settings.lock().unwrap().clone();
+    let apps = list_installed_apps()?;
+    let app = app_from_id(&apps, &settings.preferred_editor);
+    let user_prompt = prompt.unwrap_or_default();
+
+    let workflow =
+        generate_workflow_from_scan(&settings, &user_prompt, &directory, &app, &packages).await?;
 
     if settings.storage_mode == "mongodb" {
         save_remote_workflow(&settings, &workflow).await?;

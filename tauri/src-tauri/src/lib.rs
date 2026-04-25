@@ -29,8 +29,10 @@ pub fn run() {
             workflows::export_workflow,
             workflows::export_all_workflows,
             workflows::import_workflows,
+            workflows::import_workflow,
             workflows::list_installed_apps,
             workflows::generate_workflow_from_prompt,
+            workflows::generate_workflow_from_folder,
             workflows::suggest_node_update
         ])
         .run(tauri::generate_context!())

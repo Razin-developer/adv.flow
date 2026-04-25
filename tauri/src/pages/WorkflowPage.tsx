@@ -4,7 +4,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { ArrowRight, Blocks, Download, FolderOpen, Play, Sparkles, Star, Upload } from "lucide-react";
 import AppShell from "@/components/AppShell";
 import { useAppDialog } from "@/components/AppDialog";
-import AppPicker from "@/components/AppPicker";
+// import AppPicker from "@/components/AppPicker";
 import type { InstalledApp, Workflow } from "@/types/workflow";
 import { formatDate } from "@/lib/format";
 
@@ -134,11 +134,14 @@ export default function WorkflowsPage({
   onRunWorkflow: (id: string, name: string) => Promise<void>;
 }) {
   const dialog = useAppDialog();
-  const [aiPrompt, setAiPrompt] = useState("");
-  const [aiDirectory, setAiDirectory] = useState("");
-  const [installedApps, setInstalledApps] = useState<InstalledApp[]>([]);
-  const [selectedAppId, setSelectedAppId] = useState("explorer");
-  const [aiBusy, setAiBusy] = useState(false);
+  // const [aiPrompt, setAiPrompt] = useState("");
+  // const [aiDirectory, setAiDirectory] = useState("");
+  const [_, setInstalledApps] = useState<InstalledApp[]>([]);
+  const [__, setSelectedAppId] = useState("explorer");
+  // const [aiBusy, setAiBusy] = useState(false);
+  const [folderBusy, setFolderBusy] = useState(false);
+  const [folderPrompt, setFolderPrompt] = useState("");
+  const [folderDirectory, setFolderDirectory] = useState("");
   const favoriteCount = workflows.filter((workflow) => workflow.favorite).length;
   const totalBlocks = workflows.reduce(
     (total, workflow) => total + workflow.nodes.length,
@@ -155,12 +158,12 @@ export default function WorkflowsPage({
       .catch(() => setInstalledApps([]));
   }, []);
 
-  async function browseDirectory() {
-    const selected = await open({ directory: true, multiple: false });
-    if (typeof selected === "string") setAiDirectory(selected);
-  }
+  // async function browseDirectory() {
+  //   const selected = await open({ directory: true, multiple: false });
+  //   if (typeof selected === "string") setAiDirectory(selected);
+  // }
 
-  async function handleImport() {
+  async function handleImportLibrary() {
     const selected = await open({
       multiple: false,
       filters: [{ name: "Workflow JSON", extensions: ["json"] }],
@@ -169,6 +172,25 @@ export default function WorkflowsPage({
     const count = await invoke<number>("import_workflows", { path: selected });
     await onImportComplete();
     await dialog.success("Import complete", `Imported ${count} workflow${count === 1 ? "" : "s"}.`);
+  }
+
+  async function handleImportWorkflow() {
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: "Workflow JSON", extensions: ["json"] }],
+    });
+    if (!selected || typeof selected !== "string") return;
+    try {
+      const workflow = await invoke<Workflow>("import_workflow", { path: selected });
+      await onImportComplete();
+      await dialog.success("Workflow imported", `${workflow.name} was added to your library.`);
+      onOpenWorkflow(workflow.id || workflow._id || "");
+    } catch (error) {
+      await dialog.error(
+        "Could not import workflow",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
   }
 
   async function handleExportAll() {
@@ -191,24 +213,54 @@ export default function WorkflowsPage({
     await dialog.success("Workflow exported", `${name} was saved as JSON.`);
   }
 
-  async function handleGenerateWorkflow() {
-    setAiBusy(true);
+  async function browseFolderDirectory() {
+    const selected = await open({ directory: true, multiple: false });
+    if (typeof selected === "string") setFolderDirectory(selected);
+  }
+
+  async function handleGenerateFromFolder() {
+    if (!folderDirectory.trim()) {
+      await dialog.error("Pick a folder", "Choose the project folder to scan.");
+      return;
+    }
+    setFolderBusy(true);
     try {
-      const workflow = await invoke<Workflow>("generate_workflow_from_prompt", {
-        prompt: aiPrompt,
-        directory: aiDirectory,
-        appId: selectedAppId,
+      const workflow = await invoke<Workflow>("generate_workflow_from_folder", {
+        directory: folderDirectory,
+        prompt: folderPrompt.trim() ? folderPrompt : null,
       });
       await onImportComplete();
-      setAiPrompt("");
+      setFolderPrompt("");
       await dialog.success("Workflow created", `${workflow.name} is ready in your library.`);
       onOpenWorkflow(workflow.id || workflow._id || "");
     } catch (error) {
-      await dialog.error("Could not create workflow", error instanceof Error ? error.message : String(error));
+      await dialog.error(
+        "Could not create workflow",
+        error instanceof Error ? error.message : String(error),
+      );
     } finally {
-      setAiBusy(false);
+      setFolderBusy(false);
     }
   }
+
+  // async function handleGenerateWorkflow() {
+  //   setAiBusy(true);
+  //   try {
+  //     const workflow = await invoke<Workflow>("generate_workflow_from_prompt", {
+  //       prompt: aiPrompt,
+  //       directory: aiDirectory,
+  //       appId: selectedAppId,
+  //     });
+  //     await onImportComplete();
+  //     setAiPrompt("");
+  //     await dialog.success("Workflow created", `${workflow.name} is ready in your library.`);
+  //     onOpenWorkflow(workflow.id || workflow._id || "");
+  //   } catch (error) {
+  //     await dialog.error("Could not create workflow", error instanceof Error ? error.message : String(error));
+  //   } finally {
+  //     setAiBusy(false);
+  //   }
+  // }
 
   return (
     <AppShell
@@ -216,9 +268,23 @@ export default function WorkflowsPage({
       subtitle="Create clear automation flows for local apps, browsers, shells, and AI tools."
       actions={
         <>
-          <button className="secondary-action" type="button" onClick={() => void handleImport()}>
+          <button
+            className="secondary-action"
+            type="button"
+            onClick={() => void handleImportWorkflow()}
+            title="Import a single workflow JSON file"
+          >
             <Upload size={14} />
-            Import
+            Import workflow
+          </button>
+          <button
+            className="secondary-action"
+            type="button"
+            onClick={() => void handleImportLibrary()}
+            title="Import a multi-workflow library JSON file"
+          >
+            <Upload size={14} />
+            Import library
           </button>
           <button className="secondary-action" type="button" onClick={() => void handleExportAll()}>
             <Download size={14} />
@@ -231,7 +297,7 @@ export default function WorkflowsPage({
         </>
       }
     >
-      <section className="section-card ai-workflow-panel">
+      {/* <section className="section-card ai-workflow-panel">
         <div className="section-header">
           <div>
             <h2>AI workflow builder</h2>
@@ -268,6 +334,57 @@ export default function WorkflowsPage({
           <button className="primary-button ai-create-button" type="button" onClick={() => void handleGenerateWorkflow()}>
             <Sparkles size={14} />
             {aiBusy ? "Creating..." : "Create workflow"}
+          </button>
+        </div>
+      </section> */}
+
+      <section className="section-card ai-workflow-panel">
+        <div className="section-header">
+          <div>
+            <h2>AI integrated Generate from folder</h2>
+            <p>
+              Point at a project folder. Advflow scans every package.json (frontend, backend, monorepo) and
+              builds a workflow that opens your editor, runs each dev server, then opens your browser when ready.
+              Uses your preferred editor and browser from Settings.
+            </p>
+          </div>
+        </div>
+        <div className="ai-builder-grid">
+          <label className="setting-field">
+            <span>Project folder</span>
+            <div className="input-row">
+              <input
+                value={folderDirectory}
+                onChange={(event) => setFolderDirectory(event.target.value)}
+                placeholder="C:\\path\\to\\your\\project"
+              />
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => void browseFolderDirectory()}
+                title="Browse folders"
+              >
+                <FolderOpen size={14} />
+              </button>
+            </div>
+          </label>
+          <label className="setting-field ai-prompt-field">
+            <span>Extra hint (optional)</span>
+            <textarea
+              value={folderPrompt}
+              rows={2}
+              placeholder="e.g. backend uses pnpm, run tests before dev, etc."
+              onChange={(event) => setFolderPrompt(event.target.value)}
+            />
+          </label>
+          <button
+            className="primary-button ai-create-button"
+            type="button"
+            onClick={() => void handleGenerateFromFolder()}
+            disabled={folderBusy}
+          >
+            <Sparkles size={14} />
+            {folderBusy ? "Scanning..." : "Generate from folder"}
           </button>
         </div>
       </section>
@@ -357,11 +474,11 @@ export default function WorkflowsPage({
                   <Play size={15} />
                 </span>
                 <span>
-                    <strong>{workflow.name}</strong>
-                    <small>{workflow.nodes.length} blocks</small>
+                  <strong>{workflow.name}</strong>
+                  <small>{workflow.nodes.length} blocks</small>
                 </span>
               </button>
-              );
+            );
           })}
           {workflows.filter((workflow) => workflow.nodes.length > 0).length === 0 ? (
             <div className="empty-inline">No runnable workflows yet.</div>
