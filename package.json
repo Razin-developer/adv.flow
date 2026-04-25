@@ -1,0 +1,14 @@
+{
+  "name": "advflow",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CLI helpers for the AdvFlow Tauri desktop workflow automation app.",
+  "author": "OpenAI Codex",
+  "bin": {
+    "advflow": "bin/advflow.js"
+  },
+  "scripts": {
+    "build:installer": "powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1",
+    "setup:cli": "powershell -ExecutionPolicy Bypass -File scripts/setup-advflow-cli.ps1"
+  }
+}
