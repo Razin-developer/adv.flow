@@ -270,6 +270,12 @@ fn print_help() {
 }
 
 fn main() {
+    // Ensure we see something even if it exits quickly
+    if env::args().len() <= 1 {
+        print_help();
+        return;
+    }
+
     let mut args = env::args().skip(1);
     let result = match args.next().as_deref() {
         Some("ls") | Some("list") => list_workflows(),
@@ -289,7 +295,13 @@ fn main() {
     };
 
     if let Err(error) = result {
-        eprintln!("{error}");
+        eprintln!("\nError: {error}");
+        // Wait for a moment so the user can see the error if they double-clicked
+        if env::var_os("TERM").is_none() && env::var_os("PROMPT").is_none() {
+            println!("\nPress Enter to close...");
+            let mut input = String::new();
+            let _ = std::io::stdin().read_line(&mut input);
+        }
         std::process::exit(1);
     }
 }
