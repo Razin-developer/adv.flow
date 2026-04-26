@@ -43,18 +43,41 @@ jobs:
       - name: Build and Stage CLI Sidecar
         shell: bash
         run: |
-          # Get target triple
-          TRIPLE=$(rustc -vV | grep host | cut -d ' ' -f 2)
-          BIN_EXT=""
-          if [[ "$TRIPLE" == *"windows"* ]]; then BIN_EXT=".exe"; fi
-          
-          echo "Building CLI for $TRIPLE..."
           cd tauri/src-tauri
+
+          HOST_TRIPLE=$(rustc -vV | grep host | cut -d ' ' -f 2)
+
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            BIN_EXT=".exe"
+          else
+            BIN_EXT=""
+          fi
+
+          echo "Host triple: $HOST_TRIPLE"
+
           cargo build --release --bin advflow-cli
-          
+
           mkdir -p binaries
-          cp target/release/advflow-cli${BIN_EXT} binaries/advflow-cli-${TRIPLE}${BIN_EXT}
-          echo "Successfully staged sidecar: binaries/advflow-cli-${TRIPLE}${BIN_EXT}"
+
+          cp "target/release/advflow-cli${BIN_EXT}" "binaries/advflow-cli-${HOST_TRIPLE}${BIN_EXT}"
+
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            cp target/release/advflow-cli binaries/advflow-cli-aarch64-apple-darwin
+            cp target/release/advflow-cli binaries/advflow-cli-x86_64-apple-darwin
+            chmod +x binaries/advflow-cli-*
+          fi
+
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            cp target/release/advflow-cli binaries/advflow-cli-x86_64-unknown-linux-gnu
+            chmod +x binaries/advflow-cli-*
+          fi
+
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cp target/release/advflow-cli.exe binaries/advflow-cli-x86_64-pc-windows-msvc.exe
+          fi
+
+          ls -la binaries
+
 
       - uses: tauri-apps/tauri-action@v0
 
