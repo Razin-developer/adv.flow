@@ -6,7 +6,8 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build && pwsh -ExecutionPolicy Bypass -File src-tauri/scripts/build-cli-sidecar.ps1",
+    "beforeBuildCommand": "npm run build && node scripts/build-sidecar.js",
+
 
     "frontendDist": "../dist"
   },
