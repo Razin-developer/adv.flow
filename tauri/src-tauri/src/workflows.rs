@@ -7,12 +7,28 @@ use mongodb::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
 use uuid::Uuid;
+use windows::Win32::{
+    Foundation::{CloseHandle, HWND},
+    System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION},
+    UI::{
+        Input::KeyboardAndMouse::{
+            GetAsyncKeyState, VK_CONTROL, VK_F1, VK_F10, VK_F11, VK_F12, VK_F2, VK_F3, VK_F4,
+            VK_F5, VK_F6, VK_F7, VK_F8, VK_F9, VK_LWIN, VK_MENU, VK_RETURN, VK_SHIFT,
+            VK_SPACE, VK_TAB,
+        },
+        WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId},
+    },
+};
+
+use crate::macro_engine;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase", default)]
@@ -21,6 +37,9 @@ pub struct Workflow {
     pub name: String,
     pub description: String,
     pub favorite: bool,
+    pub kind: String,
+    pub base_app_id: String,
+    pub entry_hotkey: String,
     pub nodes: Vec<Value>,
     pub edges: Vec<Value>,
     pub tags: Vec<String>,
@@ -36,6 +55,9 @@ impl Default for Workflow {
             name: "Untitled workflow".to_string(),
             description: String::new(),
             favorite: false,
+            kind: "desktop".to_string(),
+            base_app_id: String::new(),
+            entry_hotkey: String::new(),
             nodes: Vec::new(),
             edges: Vec::new(),
             tags: Vec::new(),
@@ -66,8 +88,12 @@ pub struct AppSettings {
     pub sync_on_open: bool,
     pub preferred_browser: String,
     pub preferred_editor: String,
+    pub ai_provider: String,
     pub gemini_api_key: String,
     pub gemini_model: String,
+    pub local_model_endpoint: String,
+    pub local_model_api_key: String,
+    pub local_model_name: String,
 }
 
 impl Default for AppSettings {
@@ -91,8 +117,12 @@ impl Default for AppSettings {
             sync_on_open: false,
             preferred_browser: "chrome".to_string(),
             preferred_editor: "vscode".to_string(),
+            ai_provider: "gemini".to_string(),
             gemini_api_key: String::new(),
             gemini_model: "gemini-2.5-flash".to_string(),
+            local_model_endpoint: "http://127.0.0.1:1234/v1".to_string(),
+            local_model_api_key: String::new(),
+            local_model_name: String::new(),
         }
     }
 }
@@ -102,6 +132,7 @@ pub struct AppState {
     pub settings_path: PathBuf,
     pub workflows: Mutex<Vec<Workflow>>,
     pub settings: Mutex<AppSettings>,
+    pub in_app_listener_started: AtomicBool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -145,6 +176,14 @@ fn normalize_workflow(workflow: &mut Workflow) {
     if workflow.updated_at.trim().is_empty() {
         workflow.updated_at = workflow.created_at.clone();
     }
+    if workflow.kind.trim().is_empty() {
+        workflow.kind = "desktop".to_string();
+    }
+    if workflow.kind != "inApp" {
+        workflow.kind = "desktop".to_string();
+        workflow.base_app_id.clear();
+        workflow.entry_hotkey.clear();
+    }
     for (index, node) in workflow.nodes.iter_mut().enumerate() {
         normalize_node(node, index);
     }
@@ -176,6 +215,9 @@ fn validate_settings(settings: &mut AppSettings) {
     settings.auto_save_delay_ms = settings.auto_save_delay_ms.clamp(250, 5_000);
     settings.command_timeout_seconds = settings.command_timeout_seconds.clamp(15, 1_800);
     settings.max_parallel_nodes = settings.max_parallel_nodes.clamp(1, 16);
+    if settings.ai_provider != "local" {
+        settings.ai_provider = "gemini".to_string();
+    }
     if settings.preferred_browser.trim().is_empty() {
         settings.preferred_browser = "chrome".to_string();
     }
@@ -184,6 +226,9 @@ fn validate_settings(settings: &mut AppSettings) {
     }
     if settings.gemini_model.trim().is_empty() {
         settings.gemini_model = "gemini-2.5-flash".to_string();
+    }
+    if settings.local_model_endpoint.trim().is_empty() {
+        settings.local_model_endpoint = "http://127.0.0.1:1234/v1".to_string();
     }
 }
 
@@ -252,6 +297,14 @@ fn known_app_candidates() -> Vec<InstalledApp> {
             id: "cursor".to_string(),
             name: "Cursor".to_string(),
             command: "cursor".to_string(),
+            args: vec!["{path}".to_string()],
+            path: None,
+            source: "path".to_string(),
+        },
+        InstalledApp {
+            id: "antigravity".to_string(),
+            name: "Antigravity".to_string(),
+            command: "antigravity".to_string(),
             args: vec!["{path}".to_string()],
             path: None,
             source: "path".to_string(),
@@ -404,7 +457,23 @@ fn normalize_node(node: &mut Value, index: usize) {
         .get("type")
         .or_else(|| object.get("type"))
         .and_then(|value| value.as_str())
-        .filter(|value| matches!(*value, "openApp" | "runCommand" | "openBrowser" | "delay"))
+        .filter(|value| {
+            matches!(
+                *value,
+                "openApp"
+                    | "runCommand"
+                    | "openBrowser"
+                    | "delay"
+                    | "editorTerminalCommand"
+                    | "moveMouse"
+                    | "mouseClick"
+                    | "mouseDoubleClick"
+                    | "mouseScroll"
+                    | "typeText"
+                    | "pressKey"
+                    | "hotkey"
+            )
+        })
         .unwrap_or("runCommand")
         .to_string();
 
@@ -457,7 +526,7 @@ fn normalize_generated_workflow(mut workflow: Workflow, prompt: &str, directory:
     workflow.created_at = now.clone();
     workflow.updated_at = now;
     if workflow.tags.is_empty() {
-        workflow.tags = vec!["ai".to_string(), "gemini".to_string()];
+        workflow.tags = vec!["ai".to_string(), "generated".to_string()];
     }
     normalize_workflow(&mut workflow);
     workflow
@@ -770,7 +839,7 @@ Use this TypeScript shape:
   "name": "string",
   "description": "string",
   "favorite": false,
-  "tags": ["ai", "gemini"],
+  "tags": ["ai", "generated"],
   "nodes": [
     {{
       "id": "node_open_app",
@@ -798,6 +867,7 @@ openApp: appId, appName, command, args, appPath, source, folderPath, label.
 runCommand: command, workingDirectory, terminalType ("background" or "newWindow"), shellType ("powershell" or "cmd"), label.
 openBrowser: url, browser ("chrome", "edge", "brave", "comet"), waitMode ("delay" or "waitForServer"), delay, label.
 delay: delay, waitUrl, label.
+editorTerminalCommand: command, terminalHotkey, submit, label.
 
 Rules:
 - Always include an openApp node first using the supplied app fields.
@@ -884,8 +954,18 @@ async fn call_gemini_for_workflow(
 
     eprintln!("\n===== Gemini workflow JSON =====\n{text}\n===== end workflow JSON =====\n");
 
-    serde_json::from_str(text)
+    serde_json::from_str(&extract_json_text(text))
         .map_err(|error| format!("Gemini returned invalid workflow JSON: {error} | text: {text}"))
+}
+
+async fn call_ai_for_workflow(settings: &AppSettings, prompt_text: String) -> Result<Workflow, String> {
+    if settings.ai_provider == "local" {
+        let text = call_local_model_json(settings, &prompt_text, "workflow generation").await?;
+        serde_json::from_str(&text)
+            .map_err(|error| format!("Local model returned invalid workflow JSON: {error} | text: {text}"))
+    } else {
+        call_gemini_for_workflow(settings, prompt_text).await
+    }
 }
 
 async fn generate_workflow_with_gemini(
@@ -894,7 +974,7 @@ async fn generate_workflow_with_gemini(
     directory: &str,
     app: &InstalledApp,
 ) -> Result<Workflow, String> {
-    let workflow = call_gemini_for_workflow(
+    let workflow = call_ai_for_workflow(
         settings,
         workflow_generation_prompt(prompt, directory, app),
     )
@@ -1035,9 +1115,15 @@ fn build_workflow_from_scan(
             )
         }),
         favorite: false,
+        kind: "desktop".to_string(),
+        base_app_id: String::new(),
+        entry_hotkey: String::new(),
         nodes,
         edges,
-        tags: vec!["ai".to_string(), "from-folder".to_string()],
+        tags: vec![
+            "ai".to_string(),
+            "from-folder".to_string(),
+        ],
         created_at: timestamp(),
         updated_at: timestamp(),
     };
@@ -1045,27 +1131,18 @@ fn build_workflow_from_scan(
     workflow
 }
 
-async fn gemini_name_and_description(
+async fn ai_name_and_description(
     settings: &AppSettings,
     directory: &str,
     user_hint: &str,
     packages: &[DetectedPackage],
 ) -> Option<(String, String)> {
-    if settings.gemini_api_key.trim().is_empty()
+    if settings.ai_provider == "gemini"
+        && settings.gemini_api_key.trim().is_empty()
         && std::env::var("GEMINI_API_KEY").unwrap_or_default().trim().is_empty()
     {
         return None;
     }
-
-    let api_key = if settings.gemini_api_key.trim().is_empty() {
-        std::env::var("GEMINI_API_KEY").unwrap_or_default()
-    } else {
-        settings.gemini_api_key.clone()
-    };
-    let model = settings.gemini_model.trim();
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-    );
 
     let summary = scan_summary(packages);
     let prompt_text = format!(
@@ -1079,42 +1156,54 @@ Detected packages:
 Return JSON: {{ "name": "...", "description": "..." }}"#
     );
 
-    eprintln!("\n===== Gemini name/desc prompt =====\n{prompt_text}\n===== end =====\n");
-
-    let body = json!({
-        "contents": [{ "parts": [{ "text": prompt_text }] }],
-        "generationConfig": {
-            "temperature": 0.4,
-            "responseMimeType": "application/json",
-            "responseJsonSchema": {
-                "type": "object",
-                "properties": {
-                    "name": { "type": "string" },
-                    "description": { "type": "string" }
-                },
-                "required": ["name", "description"]
+    let raw_text = if settings.ai_provider == "local" {
+        call_local_model_json(settings, &prompt_text, "workflow naming").await.ok()?
+    } else {
+        let api_key = if settings.gemini_api_key.trim().is_empty() {
+            std::env::var("GEMINI_API_KEY").unwrap_or_default()
+        } else {
+            settings.gemini_api_key.clone()
+        };
+        let model = settings.gemini_model.trim();
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        );
+        let body = json!({
+            "contents": [{ "parts": [{ "text": prompt_text }] }],
+            "generationConfig": {
+                "temperature": 0.4,
+                "responseMimeType": "application/json",
+                "responseJsonSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "description": { "type": "string" }
+                    },
+                    "required": ["name", "description"]
+                }
             }
-        }
-    });
+        });
 
-    let raw = reqwest::Client::new()
-        .post(url)
-        .header("x-goog-api-key", api_key)
-        .json(&body)
-        .send()
-        .await
-        .ok()?
-        .text()
-        .await
-        .ok()?;
+        let raw = reqwest::Client::new()
+            .post(url)
+            .header("x-goog-api-key", api_key)
+            .json(&body)
+            .send()
+            .await
+            .ok()?
+            .text()
+            .await
+            .ok()?;
 
-    eprintln!("\n===== Gemini name/desc raw response =====\n{raw}\n===== end =====\n");
+        let response: Value = serde_json::from_str(&raw).ok()?;
+        extract_json_text(
+            response
+                .pointer("/candidates/0/content/parts/0/text")
+                .and_then(|value| value.as_str())?,
+        )
+    };
 
-    let response: Value = serde_json::from_str(&raw).ok()?;
-    let text = response
-        .pointer("/candidates/0/content/parts/0/text")
-        .and_then(|value| value.as_str())?;
-    let parsed: Value = serde_json::from_str(text).ok()?;
+    let parsed: Value = serde_json::from_str(&raw_text).ok()?;
     let name = parsed.get("name").and_then(|value| value.as_str())?.to_string();
     let description = parsed
         .get("description")
@@ -1140,7 +1229,7 @@ async fn generate_workflow_from_scan(
         scan_summary(packages)
     );
 
-    let (name_hint, description_hint) = match gemini_name_and_description(
+    let (name_hint, description_hint) = match ai_name_and_description(
         settings, directory, prompt, packages,
     )
     .await
@@ -1159,55 +1248,62 @@ async fn generate_workflow_from_scan(
     ))
 }
 
-async fn update_node_with_gemini(
+async fn update_node_with_ai(
     settings: &AppSettings,
     prompt: &str,
     node: &Value,
     directory: &str,
 ) -> Result<Value, String> {
-    let api_key = if settings.gemini_api_key.trim().is_empty() {
-        std::env::var("GEMINI_API_KEY").unwrap_or_default()
-    } else {
-        settings.gemini_api_key.clone()
-    };
-
-    if api_key.trim().is_empty() {
-        return Err("Add a Gemini API key in Settings or set GEMINI_API_KEY.".to_string());
-    }
-
-    let model = settings.gemini_model.trim();
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-    );
     let instruction = format!(
         "Edit this Advflow ReactFlow node according to the prompt. Return the full node JSON only. Keep node.id, node.type, and position unless the prompt explicitly requires otherwise. Directory to use when relevant: {directory}\nPrompt: {prompt}\nNode JSON: {node}",
         node = serde_json::to_string_pretty(node).unwrap_or_else(|_| "{}".to_string())
     );
-    let body = json!({
-        "contents": [{ "parts": [{ "text": instruction }] }],
-        "generationConfig": {
-            "temperature": 0.2,
-            "responseMimeType": "application/json",
-            "responseJsonSchema": { "type": "object" }
+
+    let text = if settings.ai_provider == "local" {
+        call_local_model_json(settings, &instruction, "node editing").await?
+    } else {
+        let api_key = if settings.gemini_api_key.trim().is_empty() {
+            std::env::var("GEMINI_API_KEY").unwrap_or_default()
+        } else {
+            settings.gemini_api_key.clone()
+        };
+
+        if api_key.trim().is_empty() {
+            return Err("Add a Gemini API key in Settings or set GEMINI_API_KEY.".to_string());
         }
-    });
 
-    let response: Value = reqwest::Client::new()
-        .post(url)
-        .header("x-goog-api-key", api_key)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|error| format!("Gemini request failed: {error}"))?
-        .json()
-        .await
-        .map_err(|error| format!("Gemini response was not JSON: {error}"))?;
+        let model = settings.gemini_model.trim();
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        );
+        let body = json!({
+            "contents": [{ "parts": [{ "text": instruction }] }],
+            "generationConfig": {
+                "temperature": 0.2,
+                "responseMimeType": "application/json",
+                "responseJsonSchema": { "type": "object" }
+            }
+        });
 
-    let text = response
-        .pointer("/candidates/0/content/parts/0/text")
-        .and_then(|value| value.as_str())
-        .ok_or_else(|| format!("Gemini did not return node JSON: {response}"))?;
-    serde_json::from_str(text).map_err(|error| format!("Gemini returned invalid node JSON: {error}"))
+        let response: Value = reqwest::Client::new()
+            .post(url)
+            .header("x-goog-api-key", api_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|error| format!("Gemini request failed: {error}"))?
+            .json()
+            .await
+            .map_err(|error| format!("Gemini response was not JSON: {error}"))?;
+
+        extract_json_text(
+            response
+                .pointer("/candidates/0/content/parts/0/text")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| format!("Gemini did not return node JSON: {response}"))?,
+        )
+    };
+    serde_json::from_str(&text).map_err(|error| format!("AI returned invalid node JSON: {error}"))
 }
 
 fn run_command_node(data: &Value, timeout_seconds: u32) -> Result<String, String> {
@@ -1375,12 +1471,114 @@ fn open_browser_node(data: &Value) -> Result<String, String> {
     Ok(format!("Opened {url}"))
 }
 
+fn editor_terminal_command_node(data: &Value) -> Result<String, String> {
+    let command = data.get("command").and_then(|value| value.as_str()).unwrap_or("").trim();
+    if command.is_empty() {
+        return Err("Terminal command is empty".to_string());
+    }
+
+    let hotkey = data
+        .get("terminalHotkey")
+        .and_then(|value| value.as_str())
+        .unwrap_or("ctrl+shift+`");
+    let terminal_ready_delay_ms = data
+        .get("terminalReadyDelayMs")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(1000)
+        .max(1000);
+    let submit = data.get("submit").and_then(|value| value.as_bool()).unwrap_or(true);
+
+    let hotkey_parts = hotkey
+        .split('+')
+        .map(|part| part.trim().to_string())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+
+    macro_engine::hotkey(hotkey_parts)?;
+    macro_engine::wait_ms(terminal_ready_delay_ms)?;
+    macro_engine::type_text(command.to_string())?;
+    if submit {
+        macro_engine::press_key("enter".to_string())?;
+    }
+
+    Ok(format!("Sent integrated terminal command: {command}"))
+}
+
+fn move_mouse_node(data: &Value) -> Result<String, String> {
+    let x = data.get("x").and_then(|value| value.as_i64()).unwrap_or(0) as i32;
+    let y = data.get("y").and_then(|value| value.as_i64()).unwrap_or(0) as i32;
+    macro_engine::move_mouse(x, y)?;
+    Ok(format!("Moved cursor to {x}, {y}"))
+}
+
+fn mouse_click_node(data: &Value) -> Result<String, String> {
+    let button = data.get("button").and_then(|value| value.as_str()).unwrap_or("left").to_string();
+    macro_engine::mouse_click(button.clone())?;
+    Ok(format!("Clicked {button} mouse button"))
+}
+
+fn mouse_double_click_node(data: &Value) -> Result<String, String> {
+    let button = data.get("button").and_then(|value| value.as_str()).unwrap_or("left").to_string();
+    macro_engine::mouse_double_click(button.clone())?;
+    Ok(format!("Double clicked {button} mouse button"))
+}
+
+fn mouse_scroll_node(data: &Value) -> Result<String, String> {
+    let amount = data.get("amount").and_then(|value| value.as_i64()).unwrap_or(-1) as i32;
+    macro_engine::mouse_scroll(amount)?;
+    Ok(format!("Scrolled by {amount}"))
+}
+
+fn type_text_node(data: &Value) -> Result<String, String> {
+    let text = data.get("text").and_then(|value| value.as_str()).unwrap_or("").to_string();
+    if text.is_empty() {
+        return Err("Text is empty".to_string());
+    }
+    macro_engine::type_text(text.clone())?;
+    Ok(format!("Typed {} characters", text.chars().count()))
+}
+
+fn press_key_node(data: &Value) -> Result<String, String> {
+    let key = data.get("key").and_then(|value| value.as_str()).unwrap_or("").to_string();
+    if key.trim().is_empty() {
+        return Err("Key is empty".to_string());
+    }
+    macro_engine::press_key(key.clone())?;
+    Ok(format!("Pressed key {key}"))
+}
+
+fn hotkey_node(data: &Value) -> Result<String, String> {
+    let keys = data
+        .get("keys")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(|value| value.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if keys.is_empty() {
+        return Err("Hotkey needs at least one key".to_string());
+    }
+    macro_engine::hotkey(keys.clone())?;
+    Ok(format!("Sent hotkey {}", keys.join("+")))
+}
+
 fn execute_node(node: &Value, settings: &AppSettings) -> Result<String, String> {
     let data = node.get("data").unwrap_or(node);
     match data.get("type").and_then(|value| value.as_str()).unwrap_or("") {
         "openApp" => open_app_node(data),
         "runCommand" => run_command_node(data, settings.command_timeout_seconds),
         "openBrowser" => open_browser_node(data),
+        "editorTerminalCommand" => editor_terminal_command_node(data),
+        "moveMouse" => move_mouse_node(data),
+        "mouseClick" => mouse_click_node(data),
+        "mouseDoubleClick" => mouse_double_click_node(data),
+        "mouseScroll" => mouse_scroll_node(data),
+        "typeText" => type_text_node(data),
+        "pressKey" => press_key_node(data),
+        "hotkey" => hotkey_node(data),
         "delay" => {
             let delay = data.get("delay").and_then(|value| value.as_u64()).unwrap_or(1000);
             std::thread::sleep(std::time::Duration::from_millis(delay.min(60_000)));
@@ -1388,6 +1586,264 @@ fn execute_node(node: &Value, settings: &AppSettings) -> Result<String, String> 
         }
         node_type => Err(format!("Unsupported node type: {node_type}")),
     }
+}
+
+fn extract_json_text(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if let Some(stripped) = trimmed.strip_prefix("```json") {
+        return stripped
+            .trim()
+            .trim_end_matches("```")
+            .trim()
+            .to_string();
+    }
+    if let Some(stripped) = trimmed.strip_prefix("```") {
+        return stripped
+            .trim()
+            .trim_end_matches("```")
+            .trim()
+            .to_string();
+    }
+    trimmed.to_string()
+}
+
+fn local_model_endpoint(settings: &AppSettings) -> String {
+    settings
+        .local_model_endpoint
+        .trim()
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn local_model_name(settings: &AppSettings) -> Result<String, String> {
+    let model = settings.local_model_name.trim();
+    if model.is_empty() {
+        Err("Pick a local model in Settings before generating workflows.".to_string())
+    } else {
+        Ok(model.to_string())
+    }
+}
+
+async fn call_local_model_json(
+    settings: &AppSettings,
+    prompt_text: &str,
+    purpose: &str,
+) -> Result<String, String> {
+    let endpoint = local_model_endpoint(settings);
+    let model = local_model_name(settings)?;
+    let url = format!("{endpoint}/chat/completions");
+
+    let client = reqwest::Client::new();
+    let mut request = client.post(url).json(&json!({
+        "model": model,
+        "temperature": 0.2,
+        "messages": [
+            {
+                "role": "system",
+                "content": format!("You are Advflow's workflow generation assistant. Return only valid JSON for {purpose}.")
+            },
+            {
+                "role": "user",
+                "content": prompt_text
+            }
+        ]
+    }));
+
+    if !settings.local_model_api_key.trim().is_empty() {
+        request = request.bearer_auth(settings.local_model_api_key.trim());
+    }
+
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("Local model request failed: {error}"))?;
+    let raw = response
+        .text()
+        .await
+        .map_err(|error| format!("Local model response read failed: {error}"))?;
+    let json: Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("Local model response was not JSON: {error} | body: {raw}"))?;
+    let content = json
+        .get("choices")
+        .and_then(|value| value.as_array())
+        .and_then(|items| items.first())
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("content"))
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| format!("Local model did not return message content: {json}"))?;
+    Ok(extract_json_text(content))
+}
+
+fn parse_hotkey_keys(hotkey: &str) -> Vec<String> {
+    hotkey
+        .split('+')
+        .map(|part| part.trim().to_ascii_lowercase())
+        .filter(|part| !part.is_empty())
+        .collect()
+}
+
+fn modifier_vk(key: &str) -> Option<i32> {
+    match key {
+        "ctrl" | "control" => Some(VK_CONTROL.0 as i32),
+        "shift" => Some(VK_SHIFT.0 as i32),
+        "alt" => Some(VK_MENU.0 as i32),
+        "win" | "meta" | "super" => Some(VK_LWIN.0 as i32),
+        _ => None,
+    }
+}
+
+fn primary_vk(key: &str) -> Option<i32> {
+    match key {
+        "enter" | "return" => Some(VK_RETURN.0 as i32),
+        "tab" => Some(VK_TAB.0 as i32),
+        "space" => Some(VK_SPACE.0 as i32),
+        "`" | "backquote" | "grave" => Some(0xC0),
+        "f1" => Some(VK_F1.0 as i32),
+        "f2" => Some(VK_F2.0 as i32),
+        "f3" => Some(VK_F3.0 as i32),
+        "f4" => Some(VK_F4.0 as i32),
+        "f5" => Some(VK_F5.0 as i32),
+        "f6" => Some(VK_F6.0 as i32),
+        "f7" => Some(VK_F7.0 as i32),
+        "f8" => Some(VK_F8.0 as i32),
+        "f9" => Some(VK_F9.0 as i32),
+        "f10" => Some(VK_F10.0 as i32),
+        "f11" => Some(VK_F11.0 as i32),
+        "f12" => Some(VK_F12.0 as i32),
+        _ if key.len() == 1 => key.chars().next().map(|ch| ch.to_ascii_uppercase() as i32),
+        _ => None,
+    }
+}
+
+fn is_vk_pressed(vk: i32) -> bool {
+    unsafe { GetAsyncKeyState(vk) < 0 }
+}
+
+fn hotkey_is_pressed(hotkey: &str) -> bool {
+    let parts = parse_hotkey_keys(hotkey);
+    if parts.is_empty() {
+        return false;
+    }
+
+    let mut main_key = None;
+    for part in &parts {
+        if let Some(vk) = modifier_vk(part) {
+            if !is_vk_pressed(vk) {
+                return false;
+            }
+        } else if let Some(vk) = primary_vk(part) {
+            main_key = Some(vk);
+        } else {
+            return false;
+        }
+    }
+
+    main_key.is_some_and(is_vk_pressed)
+}
+
+fn foreground_process_name() -> Option<String> {
+    let hwnd: HWND = unsafe { GetForegroundWindow() };
+    if hwnd.0.is_null() {
+        return None;
+    }
+
+    let mut process_id = 0u32;
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut process_id)) };
+    if process_id == 0 {
+        return None;
+    }
+
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id).ok()? };
+    let mut buffer = vec![0u16; 260];
+    let mut size = buffer.len() as u32;
+    let result = unsafe {
+        QueryFullProcessImageNameW(
+            handle,
+            windows::Win32::System::Threading::PROCESS_NAME_FORMAT(0),
+            windows::core::PWSTR(buffer.as_mut_ptr()),
+            &mut size,
+        )
+    };
+    let _ = unsafe { CloseHandle(handle) };
+    if result.is_err() {
+        return None;
+    }
+
+    let path = String::from_utf16_lossy(&buffer[..size as usize]);
+    Path::new(&path)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+}
+
+fn app_matches_process(app_id: &str, process_name: &str) -> bool {
+    let process_name = process_name.to_ascii_lowercase();
+    match app_id {
+        "vscode" => process_name.contains("code"),
+        "cursor" => process_name.contains("cursor"),
+        "antigravity" => process_name.contains("antigravity"),
+        other => process_name.contains(&other.to_ascii_lowercase()),
+    }
+}
+
+fn execute_workflow_nodes(workflow: &Workflow, settings: &AppSettings) -> Result<(), String> {
+    for node in &workflow.nodes {
+        execute_node(node, settings)?;
+    }
+    Ok(())
+}
+
+fn current_workflows_for_listener(app_handle: &AppHandle, settings: &AppSettings) -> Result<Vec<Workflow>, String> {
+    if settings.storage_mode == "mongodb" {
+        tauri::async_runtime::block_on(get_remote_workflows(settings))
+    } else {
+        Ok(app_handle.state::<AppState>().workflows.lock().unwrap().clone())
+    }
+}
+
+fn start_in_app_listener(app: AppHandle) {
+    if app
+        .state::<AppState>()
+        .in_app_listener_started
+        .swap(true, Ordering::SeqCst)
+    {
+        return;
+    }
+
+    std::thread::spawn(move || {
+        let mut fired = HashSet::<String>::new();
+
+        loop {
+            let state = app.state::<AppState>();
+            let settings = state.settings.lock().unwrap().clone();
+            let Ok(workflows) = current_workflows_for_listener(&app, &settings) else {
+                std::thread::sleep(std::time::Duration::from_millis(400));
+                continue;
+            };
+
+            let foreground = foreground_process_name().unwrap_or_default();
+            let active_ids = workflows
+                .iter()
+                .filter(|workflow| workflow.kind == "inApp")
+                .filter(|workflow| !workflow.entry_hotkey.trim().is_empty())
+                .filter(|workflow| !workflow.base_app_id.trim().is_empty())
+                .filter(|workflow| app_matches_process(&workflow.base_app_id, &foreground))
+                .filter(|workflow| hotkey_is_pressed(&workflow.entry_hotkey))
+                .map(|workflow| workflow.id.clone())
+                .collect::<HashSet<_>>();
+
+            for workflow in workflows
+                .iter()
+                .filter(|workflow| active_ids.contains(&workflow.id) && !fired.contains(&workflow.id))
+            {
+                let _ = execute_workflow_nodes(workflow, &settings);
+            }
+
+            fired.retain(|id| active_ids.contains(id));
+            fired.extend(active_ids);
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        }
+    });
 }
 
 async fn workflow_collection(settings: &AppSettings) -> Result<Collection<Workflow>, String> {
@@ -1690,7 +2146,7 @@ pub async fn suggest_node_update(
     directory: String,
 ) -> Result<Value, String> {
     let settings = state.settings.lock().unwrap().clone();
-    update_node_with_gemini(&settings, &prompt, &node, &directory).await
+    update_node_with_ai(&settings, &prompt, &node, &directory).await
 }
 
 #[tauri::command]
@@ -1723,6 +2179,21 @@ pub async fn create_workflow(state: State<'_, AppState>, payload: Value) -> Resu
             .get("favorite")
             .and_then(|value| value.as_bool())
             .unwrap_or(false),
+        kind: payload
+            .get("kind")
+            .and_then(|value| value.as_str())
+            .unwrap_or("desktop")
+            .to_string(),
+        base_app_id: payload
+            .get("baseAppId")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string(),
+        entry_hotkey: payload
+            .get("entryHotkey")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string(),
         nodes: payload
             .get("nodes")
             .and_then(|value| value.as_array())
@@ -1928,6 +2399,15 @@ fn apply_workflow_payload(workflow: &mut Workflow, payload: &Value) {
     if let Some(favorite) = payload.get("favorite").and_then(|value| value.as_bool()) {
         workflow.favorite = favorite;
     }
+    if let Some(kind) = payload.get("kind").and_then(|value| value.as_str()) {
+        workflow.kind = kind.to_string();
+    }
+    if let Some(base_app_id) = payload.get("baseAppId").and_then(|value| value.as_str()) {
+        workflow.base_app_id = base_app_id.to_string();
+    }
+    if let Some(entry_hotkey) = payload.get("entryHotkey").and_then(|value| value.as_str()) {
+        workflow.entry_hotkey = entry_hotkey.to_string();
+    }
     if let Some(nodes) = payload.get("nodes").and_then(|value| value.as_array()) {
         workflow.nodes = nodes.clone();
     }
@@ -1949,6 +2429,62 @@ pub fn test_node(payload: Value) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn list_local_models(
+    state: State<'_, AppState>,
+    endpoint: Option<String>,
+    api_key: Option<String>,
+) -> Result<Vec<String>, String> {
+    let settings = state.settings.lock().unwrap().clone();
+    let endpoint = endpoint
+        .unwrap_or_else(|| settings.local_model_endpoint.clone())
+        .trim()
+        .trim_end_matches('/')
+        .to_string();
+    if endpoint.is_empty() {
+        return Err("Add a local model endpoint first.".to_string());
+    }
+
+    let mut request = reqwest::Client::new().get(format!("{endpoint}/models"));
+    let token = api_key.unwrap_or_else(|| settings.local_model_api_key.clone());
+    if !token.trim().is_empty() {
+        request = request.bearer_auth(token.trim());
+    }
+
+    let response: Value = request
+        .send()
+        .await
+        .map_err(|error| format!("Could not reach local model host: {error}"))?
+        .json()
+        .await
+        .map_err(|error| format!("Local model host did not return JSON: {error}"))?;
+
+    let mut models = response
+        .get("data")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("id").and_then(|value| value.as_str()))
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    models.sort();
+    models.dedup();
+    Ok(models)
+}
+
+#[tauri::command]
+pub fn ensure_in_app_listener(app: AppHandle) -> Result<bool, String> {
+    start_in_app_listener(app.clone());
+    Ok(app
+        .state::<AppState>()
+        .in_app_listener_started
+        .load(Ordering::SeqCst))
+}
+
+#[tauri::command]
 pub async fn execute_workflow(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let settings = state.settings.lock().unwrap().clone();
     let workflow = if settings.storage_mode == "mongodb" {
@@ -1960,11 +2496,7 @@ pub async fn execute_workflow(state: State<'_, AppState>, id: String) -> Result<
     }
     .ok_or_else(|| "Workflow not found".to_string())?;
 
-    for node in &workflow.nodes {
-        execute_node(node, &settings)?;
-    }
-
-    Ok(())
+    execute_workflow_nodes(&workflow, &settings)
 }
 
 pub fn init_state(app_handle: &AppHandle) -> AppState {
@@ -2001,5 +2533,6 @@ pub fn init_state(app_handle: &AppHandle) -> AppState {
         settings_path,
         workflows: Mutex::new(workflows),
         settings: Mutex::new(settings),
+        in_app_listener_started: AtomicBool::new(false),
     }
 }

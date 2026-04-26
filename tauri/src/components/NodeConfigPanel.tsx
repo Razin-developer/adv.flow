@@ -35,7 +35,7 @@ export default function NodeConfigPanel({ node, onChange }: NodeConfigPanelProps
     );
   }
 
-  const updateField = (key: string, value: string | number | string[]) => {
+  const updateField = (key: string, value: string | number | boolean | string[]) => {
     onChange((currentNode) => ({
       ...currentNode,
       data: {
@@ -208,6 +208,101 @@ export default function NodeConfigPanel({ node, onChange }: NodeConfigPanelProps
               <input value={node.data.waitUrl || ''} onChange={(event) => updateField('waitUrl', event.target.value)} />
             </label>
           </>
+        ) : null}
+
+        {node.data.type === 'editorTerminalCommand' ? (
+          <>
+            <label className="field">
+              <span>Command</span>
+              <textarea
+                value={node.data.command || ''}
+                onChange={(event) => updateField('command', event.target.value)}
+                rows={4}
+              />
+            </label>
+            <label className="field">
+              <span>Terminal hotkey</span>
+              <input
+                value={node.data.terminalHotkey || 'ctrl+shift+`'}
+                onChange={(event) => updateField('terminalHotkey', event.target.value)}
+              />
+            </label>
+            <label className="field">
+              <span>Terminal ready delay (ms)</span>
+              <input
+                type="number"
+                min={1000}
+                value={node.data.terminalReadyDelayMs ?? 1000}
+                onChange={(event) => updateField('terminalReadyDelayMs', Number(event.target.value))}
+              />
+            </label>
+            <label className="toggle-card">
+              <div>
+                <strong>Submit with Enter</strong>
+                <span>Send the command immediately after typing it.</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={node.data.submit ?? true}
+                onChange={(event) => updateField('submit', event.target.checked)}
+              />
+            </label>
+          </>
+        ) : null}
+
+        {node.data.type === 'moveMouse' ? (
+          <div className="setting-row">
+            <label className="field">
+              <span>X</span>
+              <input type="number" value={node.data.x ?? 0} onChange={(event) => updateField('x', Number(event.target.value))} />
+            </label>
+            <label className="field">
+              <span>Y</span>
+              <input type="number" value={node.data.y ?? 0} onChange={(event) => updateField('y', Number(event.target.value))} />
+            </label>
+          </div>
+        ) : null}
+
+        {node.data.type === 'mouseClick' || node.data.type === 'mouseDoubleClick' ? (
+          <label className="field">
+            <span>Button</span>
+            <select value={node.data.button || 'left'} onChange={(event) => updateField('button', event.target.value)}>
+              <option value="left">Left</option>
+              <option value="right">Right</option>
+              <option value="middle">Middle</option>
+            </select>
+          </label>
+        ) : null}
+
+        {node.data.type === 'mouseScroll' ? (
+          <label className="field">
+            <span>Scroll amount</span>
+            <input type="number" value={node.data.amount ?? -1} onChange={(event) => updateField('amount', Number(event.target.value))} />
+          </label>
+        ) : null}
+
+        {node.data.type === 'typeText' ? (
+          <label className="field">
+            <span>Text</span>
+            <textarea value={node.data.text || ''} onChange={(event) => updateField('text', event.target.value)} rows={4} />
+          </label>
+        ) : null}
+
+        {node.data.type === 'pressKey' ? (
+          <label className="field">
+            <span>Key</span>
+            <input value={node.data.key || ''} onChange={(event) => updateField('key', event.target.value)} />
+          </label>
+        ) : null}
+
+        {node.data.type === 'hotkey' ? (
+          <label className="field">
+            <span>Keys (comma separated)</span>
+            <input
+              value={Array.isArray(node.data.keys) ? node.data.keys.join(', ') : ''}
+              onChange={(event) => updateField('keys', event.target.value.split(',').map((value) => value.trim()).filter(Boolean))}
+            />
+          </label>
         ) : null}
 
       </section>

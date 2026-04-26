@@ -136,18 +136,19 @@ export default function WorkflowsPage({
   const dialog = useAppDialog();
   // const [aiPrompt, setAiPrompt] = useState("");
   // const [aiDirectory, setAiDirectory] = useState("");
+  const desktopWorkflows = workflows.filter((workflow) => workflow.kind !== "inApp");
   const [_, setInstalledApps] = useState<InstalledApp[]>([]);
   const [__, setSelectedAppId] = useState("explorer");
   // const [aiBusy, setAiBusy] = useState(false);
   const [folderBusy, setFolderBusy] = useState(false);
   const [folderPrompt, setFolderPrompt] = useState("");
   const [folderDirectory, setFolderDirectory] = useState("");
-  const favoriteCount = workflows.filter((workflow) => workflow.favorite).length;
-  const totalBlocks = workflows.reduce(
+  const favoriteCount = desktopWorkflows.filter((workflow) => workflow.favorite).length;
+  const totalBlocks = desktopWorkflows.reduce(
     (total, workflow) => total + workflow.nodes.length,
     0,
   );
-  const recent = workflows.slice(0, 3);
+  const recent = desktopWorkflows.slice(0, 3);
 
   useEffect(() => {
     void invoke<InstalledApp[]>("list_installed_apps")
@@ -392,7 +393,7 @@ export default function WorkflowsPage({
       <section className="hero-grid">
         <div className="hero-card hero-card-primary">
           <div className="hero-kicker">Workspace summary</div>
-          <div className="hero-value">{workflows.length}</div>
+          <div className="hero-value">{desktopWorkflows.length}</div>
           <p>Reusable desktop workflows saved in your current library.</p>
         </div>
         <div className="metric-card">
@@ -461,7 +462,7 @@ export default function WorkflowsPage({
           </div>
         </div>
         <div className="quick-run-grid">
-          {workflows.filter((workflow) => workflow.nodes.length > 0).slice(0, 6).map((workflow) => {
+          {desktopWorkflows.filter((workflow) => workflow.nodes.length > 0).slice(0, 6).map((workflow) => {
             const id = workflow.id || workflow._id || "";
             return (
               <button
@@ -480,7 +481,7 @@ export default function WorkflowsPage({
               </button>
             );
           })}
-          {workflows.filter((workflow) => workflow.nodes.length > 0).length === 0 ? (
+          {desktopWorkflows.filter((workflow) => workflow.nodes.length > 0).length === 0 ? (
             <div className="empty-inline">No runnable workflows yet.</div>
           ) : null}
         </div>
@@ -495,7 +496,7 @@ export default function WorkflowsPage({
         </div>
         {loading ? (
           <div className="empty-inline">Loading workflows...</div>
-        ) : workflows.length === 0 ? (
+        ) : desktopWorkflows.length === 0 ? (
           <div className="empty-state-panel">
             <div className="empty-state-copy">
               <h3>No workflows yet</h3>
@@ -510,7 +511,7 @@ export default function WorkflowsPage({
           </div>
         ) : (
           <WorkflowGrid
-            workflows={workflows}
+            workflows={desktopWorkflows}
             onOpen={onOpenWorkflow}
             onDuplicate={onDuplicateWorkflow}
             onDelete={onDeleteWorkflow}

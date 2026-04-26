@@ -17,6 +17,10 @@ export interface AppSettings {
   syncOnOpen: boolean;
   preferredBrowser: string;
   preferredEditor: string;
+  aiProvider: "gemini" | "local";
   geminiApiKey: string;
   geminiModel: string;
+  localModelEndpoint: string;
+  localModelApiKey: string;
+  localModelName: string;
 }

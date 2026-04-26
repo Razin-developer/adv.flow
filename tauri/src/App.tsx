@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { DialogProvider, useAppDialog } from "@/components/AppDialog";
 import BuilderWrapper from "@/BuilderWrapper";
 import IntegrationsPage from "@/pages/IntegrationsPage";
+import InAppWorkflowsPage from "@/pages/InAppWorkflowsPage";
 import RunsPage from "@/pages/RunsPage";
 import SettingsPage from "@/pages/SettingsPage";
 import TemplatesPage from "@/pages/TemplatesPage";
@@ -31,8 +32,12 @@ const DEFAULT_SETTINGS: AppSettings = {
   syncOnOpen: false,
   preferredBrowser: "chrome",
   preferredEditor: "vscode",
+  aiProvider: "gemini",
   geminiApiKey: "",
   geminiModel: "gemini-2.5-flash",
+  localModelEndpoint: "http://127.0.0.1:1234/v1",
+  localModelApiKey: "",
+  localModelName: "",
 };
 
 function AppRouter() {
@@ -72,6 +77,7 @@ function AppRouter() {
   useEffect(() => {
     void loadWorkflows();
     void loadSettings();
+    void invoke("ensure_in_app_listener").catch(() => undefined);
   }, []);
 
   async function handleCreateWorkflow(payload?: Partial<Workflow>) {
@@ -79,6 +85,9 @@ function AppRouter() {
       payload: {
         name: payload?.name || "New Workflow",
         description: payload?.description || "",
+        kind: payload?.kind || "desktop",
+        baseAppId: payload?.baseAppId || "",
+        entryHotkey: payload?.entryHotkey || "",
         tags: payload?.tags || [],
         favorite: payload?.favorite || false,
         nodes: payload?.nodes || [],
@@ -154,6 +163,20 @@ function AppRouter() {
               onToggleFavorite={(id: string) => void handleToggleFavorite(id)}
               onImportComplete={loadWorkflows}
               onRunWorkflow={handleRunWorkflow}
+            />
+          }
+        />
+        <Route
+          path="/in-app"
+          element={
+            <InAppWorkflowsPage
+              workflows={workflows}
+              loading={loadingWorkflows}
+              onCreateWorkflow={(payload) => void handleCreateWorkflow(payload)}
+              onOpenWorkflow={(id: string) => navigate(`/builder/${id}?from=in-app`)}
+              onDuplicateWorkflow={(id: string) => void handleDuplicateWorkflow(id)}
+              onDeleteWorkflow={(id: string) => void handleDeleteWorkflow(id)}
+              onToggleFavorite={(id: string) => void handleToggleFavorite(id)}
             />
           }
         />

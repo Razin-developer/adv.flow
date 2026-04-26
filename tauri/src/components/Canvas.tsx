@@ -20,6 +20,7 @@ import NodeConfigPanel from '@/components/NodeConfigPanel';
 import ExecutionPanel from '@/components/ExecutionPanel';
 import BlockNode from '@/components/nodes/BlockNode';
 import { useBuilderStore } from '@/store/builderStore';
+import type { WorkflowKind } from '@/types/workflow';
 
 const nodeTypes = { block: BlockNode };
 
@@ -29,6 +30,7 @@ interface CanvasProps {
   initialEdges: Edge[];
   onChange: (nodes: Node[], edges: Edge[]) => void;
   onBeforeRun: () => Promise<string | null>;
+  workflowKind: WorkflowKind;
 }
 
 function defaultNodeData(type: string) {
@@ -41,12 +43,28 @@ function defaultNodeData(type: string) {
       return { type, id: '', label: 'Open Browser', url: 'http://localhost:3000', browser: 'chrome', waitMode: 'delay', delay: 0 };
     case 'delay':
       return { type, id: '', label: 'Delay', delay: 1000, waitUrl: '' };
+    case 'editorTerminalCommand':
+      return { type, id: '', label: 'Run in integrated terminal', command: '', terminalHotkey: 'ctrl+shift+`', terminalReadyDelayMs: 1000, submit: true };
+    case 'moveMouse':
+      return { type, id: '', label: 'Move cursor', x: 640, y: 360 };
+    case 'mouseClick':
+      return { type, id: '', label: 'Mouse click', button: 'left' };
+    case 'mouseDoubleClick':
+      return { type, id: '', label: 'Double click', button: 'left' };
+    case 'mouseScroll':
+      return { type, id: '', label: 'Scroll', amount: -1 };
+    case 'typeText':
+      return { type, id: '', label: 'Type text', text: '' };
+    case 'pressKey':
+      return { type, id: '', label: 'Press key', key: 'enter' };
+    case 'hotkey':
+      return { type, id: '', label: 'Send hotkey', keys: ['ctrl', 'shift', 'p'] };
     default:
       return { type, id: '', label: 'Block' };
   }
 }
 
-function InnerCanvas({ workflowId, initialNodes, initialEdges, onChange, onBeforeRun }: CanvasProps) {
+function InnerCanvas({ workflowId, initialNodes, initialEdges, onChange, onBeforeRun, workflowKind }: CanvasProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -129,7 +147,7 @@ function InnerCanvas({ workflowId, initialNodes, initialEdges, onChange, onBefor
 
   return (
     <div className="canvas-shell">
-      <BlockSidebar onAddBlock={(type) => addNode(type)} />
+      <BlockSidebar workflowKind={workflowKind} onAddBlock={(type) => addNode(type)} />
 
       <div
         ref={wrapperRef}
@@ -180,7 +198,7 @@ function InnerCanvas({ workflowId, initialNodes, initialEdges, onChange, onBefor
             updateNode(selectedNodeId, updater);
           }}
         />
-        <ExecutionPanel workflowId={workflowId} onBeforeRun={onBeforeRun} />
+        <ExecutionPanel workflowId={workflowId} onBeforeRun={onBeforeRun} workflowKind={workflowKind} />
       </div>
     </div>
   );

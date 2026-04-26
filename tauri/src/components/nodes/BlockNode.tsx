@@ -8,6 +8,14 @@ const LABELS: Record<string, string> = {
   runCommand: 'Run Command',
   openBrowser: 'Open Browser',
   delay: 'Delay',
+  editorTerminalCommand: 'Editor Terminal',
+  moveMouse: 'Move Cursor',
+  mouseClick: 'Mouse Click',
+  mouseDoubleClick: 'Double Click',
+  mouseScroll: 'Mouse Scroll',
+  typeText: 'Type Text',
+  pressKey: 'Press Key',
+  hotkey: 'Hotkey',
 };
 
 interface BlockNodeData {

@@ -2,7 +2,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { spawnSync, spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 
 function appDataCandidates() {
   const roots = [
@@ -14,123 +14,221 @@ function appDataCandidates() {
   return roots.flatMap((root) => names.map((name) => path.join(root, name, "workflows.json")));
 }
 
-function loadWorkflows() {
+function findWorkflowStore() {
   const direct = appDataCandidates().find((candidate) => fs.existsSync(candidate));
-  const fallback = [process.env.APPDATA, process.env.LOCALAPPDATA]
-    .filter(Boolean)
-    .flatMap((root) => {
-      try {
-        return fs
-          .readdirSync(root, { withFileTypes: true })
-          .filter((entry) => entry.isDirectory() && /adv.?flow|com\.advflow/i.test(entry.name))
-          .map((entry) => path.join(root, entry.name, "workflows.json"));
-      } catch {
-        return [];
-      }
-    })
-    .find((candidate) => fs.existsSync(candidate));
-  const file = direct || fallback;
-  if (!file) {
-    throw new Error("No Advflow workflow store found. Open the desktop app once first.");
+  if (direct) return direct;
+
+  for (const root of [process.env.APPDATA, process.env.LOCALAPPDATA].filter(Boolean)) {
+    try {
+      const found = fs
+        .readdirSync(root, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && /adv.?flow|com\.advflow/i.test(entry.name))
+        .map((entry) => path.join(root, entry.name, "workflows.json"))
+        .find((candidate) => fs.existsSync(candidate));
+      if (found) return found;
+    } catch {
+      // Keep scanning other app-data roots.
+    }
   }
-  return JSON.parse(fs.readFileSync(file, "utf8"));
+
+  return null;
+}
+
+function loadWorkflows() {
+  const file = findWorkflowStore();
+  if (!file) {
+    throw new Error("No AdvFlow workflow store found. Open the desktop app once first.");
+  }
+  const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (!Array.isArray(parsed)) {
+    throw new Error(`Workflow store is not an array: ${file}`);
+  }
+  return parsed;
+}
+
+function nodeData(node) {
+  return node?.data && typeof node.data === "object" ? node.data : node || {};
+}
+
+function workflowName(workflow) {
+  return typeof workflow?.name === "string" ? workflow.name : "";
+}
+
+function workflowId(workflow) {
+  return typeof workflow?.id === "string" ? workflow.id : "";
+}
+
+function isInAppWorkflow(workflow) {
+  return workflow?.kind === "inApp" || (Array.isArray(workflow?.tags) && workflow.tags.includes("in-app"));
+}
+
+function terminalWorkflows() {
+  return loadWorkflows().filter((workflow) => !isInAppWorkflow(workflow));
 }
 
 function list() {
-  const workflows = loadWorkflows();
+  const workflows = terminalWorkflows();
   if (!workflows.length) {
-    console.log("No workflows yet.");
+    console.log("No terminal-runnable workflows yet.");
     return;
   }
   for (const workflow of workflows) {
-    console.log(`${workflow.name}  ${workflow.id}  ${workflow.nodes?.length || 0} nodes`);
+    const nodes = Array.isArray(workflow.nodes) ? workflow.nodes.length : 0;
+    console.log(`${workflowName(workflow)}  ${workflowId(workflow)}  ${nodes} nodes`);
   }
 }
 
-function runCommand(data) {
-  const shell = data.shellType === "cmd" ? "cmd" : "powershell";
-  const cwd = data.workingDirectory && data.workingDirectory.trim() ? data.workingDirectory : process.cwd();
-  if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
+function resolveWorkingDirectory(value) {
+  const cwd = typeof value === "string" && value.trim() ? value.trim() : process.cwd();
+  if (!fs.existsSync(cwd)) {
     throw new Error(`Working directory does not exist: ${cwd}`);
   }
+  if (!fs.statSync(cwd).isDirectory()) {
+    throw new Error(`Working directory is not a folder: ${cwd}`);
+  }
+  return cwd;
+}
+
+function psQuote(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function runDetached(command, args) {
+  const child = spawn(command, args, {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: false,
+  });
+  child.unref();
+}
+
+function runCommand(data) {
+  const command = typeof data.command === "string" ? data.command : "";
+  if (!command.trim()) {
+    throw new Error("Command is empty");
+  }
+
+  const shell = data.shellType === "cmd" ? "cmd" : "powershell";
+  const cwd = resolveWorkingDirectory(data.workingDirectory);
+
   if (data.terminalType === "newWindow") {
     if (shell === "cmd") {
-      spawn("cmd", ["/c", "start", "", "cmd", "/k", `cd /d "${cwd}" && ${data.command}`], {
-        detached: true,
-        stdio: "ignore",
-      }).unref();
-    } else {
-      spawn("cmd", [
-        "/c",
-        "start",
-        "",
-        "powershell",
-        "-NoExit",
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        `Set-Location -LiteralPath '${cwd.replace(/'/g, "''")}'; ${data.command}`,
-      ], { detached: true, stdio: "ignore" }).unref();
+      runDetached("cmd", ["/c", "start", "", "cmd", "/k", `cd /d "${cwd}" && ${command}`]);
+      return;
     }
+    runDetached("cmd", [
+      "/c",
+      "start",
+      "",
+      "powershell",
+      "-NoExit",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      `Set-Location -LiteralPath ${psQuote(cwd)}; ${command}`,
+    ]);
     return;
   }
-  const args = shell === "cmd" ? ["/c", data.command] : ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", data.command];
+
+  const args =
+    shell === "cmd"
+      ? ["/c", command]
+      : ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command];
   const result = spawnSync(shell, args, {
     cwd,
     stdio: "inherit",
     shell: false,
+    windowsHide: false,
   });
-  if (result.status !== 0) process.exit(result.status || 1);
+
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    process.exit(result.status || 1);
+  }
+}
+
+function buildOpenAppArgs(data, folder) {
+  if (Array.isArray(data.args)) {
+    return data.args.map((arg) => String(arg).replaceAll("{path}", folder)).filter(Boolean);
+  }
+  return folder ? [folder] : [];
 }
 
 function runOpenApp(data) {
-  const folder = data.folderPath || process.cwd();
-  const args = Array.isArray(data.args) ? data.args.map((arg) => arg.replace("{path}", folder)) : [folder];
+  const folder = typeof data.folderPath === "string" && data.folderPath.trim() ? data.folderPath.trim() : process.cwd();
   const file = data.appPath || data.command;
+  if (!file || typeof file !== "string") {
+    throw new Error("App command is empty");
+  }
+
+  const args = buildOpenAppArgs(data, folder);
   if (/\.lnk$/i.test(file)) {
-    spawn("cmd", ["/c", "start", "", file, ...args.filter(Boolean)], {
-      detached: true,
-      stdio: "ignore",
-    }).unref();
+    runDetached("cmd", ["/c", "start", "", file, ...args]);
     return;
   }
-  const psArgs = args
-    .filter(Boolean)
-    .map((arg) => `'${arg.replace(/'/g, "''")}'`)
-    .join(", ");
-  const script = psArgs
-    ? `Start-Process -FilePath '${file.replace(/'/g, "''")}' -ArgumentList @(${psArgs})`
-    : `Start-Process -FilePath '${file.replace(/'/g, "''")}'`;
-  spawn("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], {
-    detached: true,
-    stdio: "ignore",
-  }).unref();
+
+  const psArgs = args.length ? ` -ArgumentList @(${args.map(psQuote).join(", ")})` : "";
+  runDetached("powershell", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    `Start-Process -FilePath ${psQuote(file)}${psArgs}`,
+  ]);
 }
 
 function runOpenBrowser(data) {
-  const browser = data.browser === "edge" ? "msedge" : data.browser === "brave" ? "brave" : "chrome";
-  spawn("cmd", ["/c", "start", "", browser, data.url], { detached: true, stdio: "ignore" }).unref();
+  const url = typeof data.url === "string" ? data.url.trim() : "";
+  if (!url) {
+    throw new Error("URL is empty");
+  }
+  const browser =
+    data.browser === "edge" ? "msedge" : data.browser === "brave" ? "brave" : data.browser === "comet" ? "comet" : "chrome";
+  runDetached("cmd", ["/c", "start", "", browser, url]);
+}
+
+function runNode(node) {
+  const data = nodeData(node);
+  switch (data.type) {
+    case "runCommand":
+      runCommand(data);
+      break;
+    case "openApp":
+      runOpenApp(data);
+      break;
+    case "openBrowser":
+      runOpenBrowser(data);
+      break;
+    case "delay":
+      return new Promise((resolve) => setTimeout(resolve, Math.min(Number(data.delay) || 1000, 60000)));
+    default:
+      throw new Error(`Unsupported node type: ${data.type || "unknown"}`);
+  }
 }
 
 async function run(projectName) {
-  const workflows = loadWorkflows();
-  const workflow = workflows.find(
-    (item) =>
-      item.name.toLowerCase() === projectName.toLowerCase() ||
-      item.id === projectName,
-  );
+  const workflows = terminalWorkflows();
+  const wanted = projectName.toLowerCase();
+  const workflow = workflows.find((item) => workflowId(item) === projectName || workflowName(item).toLowerCase() === wanted);
   if (!workflow) {
     throw new Error(`Workflow not found: ${projectName}`);
   }
-  for (const node of workflow.nodes || []) {
-    const data = node.data || node;
-    console.log(`> ${data.label || data.type}`);
-    if (data.type === "runCommand") runCommand(data);
-    if (data.type === "openApp") runOpenApp(data);
-    if (data.type === "openBrowser") runOpenBrowser(data);
-    if (data.type === "delay") await new Promise((resolve) => setTimeout(resolve, Math.min(data.delay || 1000, 60000)));
+
+  for (const node of Array.isArray(workflow.nodes) ? workflow.nodes : []) {
+    const data = nodeData(node);
+    console.log(`> ${data.label || data.type || "Node"}`);
+    await runNode(node);
   }
+}
+
+function printHelp() {
+  console.log("AdvFlow CLI");
+  console.log("Usage:");
+  console.log("  advflow ls");
+  console.log("  advflow run <project-name-or-id>");
 }
 
 async function main() {
@@ -140,13 +238,15 @@ async function main() {
     return;
   }
   if (command === "run") {
-    if (!args.length) throw new Error("Usage: advflow run <project-name>");
+    if (!args.length) throw new Error("Usage: advflow run <project-name-or-id>");
     await run(args.join(" "));
     return;
   }
-  console.log("Usage:");
-  console.log("  advflow ls");
-  console.log("  advflow run <project-name>");
+  if (!command || command === "-h" || command === "--help") {
+    printHelp();
+    return;
+  }
+  throw new Error(`Unknown command: ${command}`);
 }
 
 main().catch((error) => {

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { Save } from "lucide-react";
 import AppShell from "@/components/AppShell";
 import { useAppDialog } from "@/components/AppDialog";
@@ -22,9 +23,12 @@ export default function SettingsPage({
   const [draft, setDraft] = useState<AppSettings>(settings);
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState<null | "save" | "test" | "push" | "pull">(null);
+  const [localModels, setLocalModels] = useState<string[]>([]);
+  const [loadingLocalModels, setLoadingLocalModels] = useState(false);
 
   useEffect(() => {
     setDraft(settings);
+    setLocalModels(settings.localModelName ? [settings.localModelName] : []);
   }, [settings]);
 
   const setField = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
@@ -44,6 +48,26 @@ export default function SettingsPage({
       await dialog.error("Action failed", message);
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function loadLocalModels() {
+    setLoadingLocalModels(true);
+    try {
+      const models = await invoke<string[]>("list_local_models", {
+        endpoint: draft.localModelEndpoint || null,
+        apiKey: draft.localModelApiKey || null,
+      });
+      setLocalModels(models);
+      if (!draft.localModelName && models[0]) {
+        setField("localModelName", models[0]);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(message);
+      await dialog.error("Could not load local models", message);
+    } finally {
+      setLoadingLocalModels(false);
     }
   }
 
@@ -336,11 +360,23 @@ export default function SettingsPage({
         <section className="section-card">
           <div className="section-header">
             <div>
-              <h2>Gemini AI</h2>
-              <p>Used to generate workflow JSON and edit node configuration.</p>
+              <h2>AI workflow generation</h2>
+              <p>Choose Gemini or a local hosted model for workflow generation and node editing.</p>
             </div>
           </div>
 
+          <label className="setting-field">
+            <span>Provider</span>
+            <select
+              value={draft.aiProvider}
+              onChange={(event) => setField("aiProvider", event.target.value as AppSettings["aiProvider"])}
+            >
+              <option value="gemini">Gemini</option>
+              <option value="local">Local hosted model</option>
+            </select>
+          </label>
+
+          {draft.aiProvider === "gemini" ? (
           <div className="setting-row">
             <label className="setting-field">
               <span>API key</span>
@@ -359,6 +395,55 @@ export default function SettingsPage({
               />
             </label>
           </div>
+          ) : (
+            <>
+              <div className="setting-row">
+                <label className="setting-field">
+                  <span>Endpoint</span>
+                  <input
+                    value={draft.localModelEndpoint}
+                    placeholder="http://127.0.0.1:1234/v1"
+                    onChange={(event) => setField("localModelEndpoint", event.target.value)}
+                  />
+                </label>
+                <label className="setting-field">
+                  <span>API key</span>
+                  <input
+                    type="password"
+                    value={draft.localModelApiKey}
+                    placeholder="Optional for local hosts"
+                    onChange={(event) => setField("localModelApiKey", event.target.value)}
+                  />
+                </label>
+              </div>
+
+              <div className="setting-row">
+                <label className="setting-field">
+                  <span>Model</span>
+                  <select
+                    value={draft.localModelName}
+                    onChange={(event) => setField("localModelName", event.target.value)}
+                  >
+                    <option value="">Select a local model</option>
+                    {localModels.map((model) => (
+                      <option key={model} value={model}>
+                        {model}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="settings-actions">
+                  <button
+                    className="secondary-action"
+                    type="button"
+                    onClick={() => void loadLocalModels()}
+                  >
+                    {loadingLocalModels ? "Loading..." : "Refresh models"}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
         </section>
       </div>
     </AppShell>

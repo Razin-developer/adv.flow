@@ -52,10 +52,21 @@ fn workflow_id(workflow: &Value) -> &str {
     string_field(workflow, "id")
 }
 
+fn is_in_app_workflow(workflow: &Value) -> bool {
+    string_field(workflow, "kind") == "inApp"
+        || workflow
+            .get("tags")
+            .and_then(Value::as_array)
+            .is_some_and(|tags| tags.iter().any(|tag| tag.as_str() == Some("in-app")))
+}
+
 fn list_workflows() -> Result<(), String> {
-    let workflows = load_workflows()?;
+    let workflows = load_workflows()?
+        .into_iter()
+        .filter(|workflow| !is_in_app_workflow(workflow))
+        .collect::<Vec<_>>();
     if workflows.is_empty() {
-        println!("No workflows yet.");
+        println!("No terminal-runnable workflows yet.");
         return Ok(());
     }
 
@@ -244,6 +255,7 @@ fn run_workflow(name_or_id: &str) -> Result<(), String> {
     let wanted = name_or_id.to_lowercase();
     let workflow = workflows
         .iter()
+        .filter(|workflow| !is_in_app_workflow(workflow))
         .find(|workflow| workflow_id(workflow) == name_or_id || workflow_name(workflow).to_lowercase() == wanted)
         .ok_or_else(|| format!("Workflow not found: {name_or_id}"))?;
 

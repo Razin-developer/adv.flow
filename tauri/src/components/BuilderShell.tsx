@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { Edge, Node } from 'reactflow';
-import type { Workflow } from '@/types/workflow';
+import AppPicker from '@/components/AppPicker';
+import type { InstalledApp, Workflow, WorkflowKind } from '@/types/workflow';
 import type { AppSettings } from '@/types/settings';
 import Canvas from '@/components/Canvas';
 import { invoke } from "@tauri-apps/api/core";
@@ -12,6 +13,9 @@ import { useAppDialog } from '@/components/AppDialog';
 const EMPTY_WORKFLOW: Workflow = {
   name: 'Untitled workflow',
   description: '',
+  kind: 'desktop',
+  baseAppId: '',
+  entryHotkey: '',
   tags: [],
   favorite: false,
   nodes: [],
@@ -24,6 +28,9 @@ type BuilderSnapshot = {
   workflowId: string | null;
   name: string;
   description: string;
+  kind: WorkflowKind;
+  baseAppId: string;
+  entryHotkey: string;
   tags: string[];
   favorite: boolean;
   nodes: Node[];
@@ -88,10 +95,14 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
   const [description, setDescription] = useState(EMPTY_WORKFLOW.description);
   const [tagsInput, setTagsInput] = useState('');
   const [favorite, setFavorite] = useState(false);
+  const [kind, setKind] = useState<WorkflowKind>('desktop');
+  const [baseAppId, setBaseAppId] = useState('');
+  const [entryHotkey, setEntryHotkey] = useState('');
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(workflowId ?? null);
   const [autoSaveDelay, setAutoSaveDelay] = useState(900);
+  const [installedApps, setInstalledApps] = useState<InstalledApp[]>([]);
 
   const hydratedRef = useRef(false);
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -99,9 +110,12 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
   const lastSaveFailedRef = useRef(false);
   const latestRef = useRef<BuilderSnapshot>({
     workflowId: workflowId ?? null,
-    name: EMPTY_WORKFLOW.name,
-    description: EMPTY_WORKFLOW.description,
-    tags: [],
+      name: EMPTY_WORKFLOW.name,
+      description: EMPTY_WORKFLOW.description,
+      kind: 'desktop',
+      baseAppId: '',
+      entryHotkey: '',
+      tags: [],
     favorite: false,
     nodes: [],
     edges: [],
@@ -112,18 +126,26 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
       workflowId: currentId,
       name,
       description,
+      kind,
+      baseAppId,
+      entryHotkey,
       tags: tagsInput.split(',').map((tag) => tag.trim()).filter(Boolean),
       favorite,
       nodes,
       edges,
     };
-  }, [currentId, name, description, tagsInput, favorite, nodes, edges]);
+  }, [currentId, name, description, kind, baseAppId, entryHotkey, tagsInput, favorite, nodes, edges]);
 
   useEffect(() => {
     let mounted = true;
     invoke<AppSettings>('get_settings')
       .then((settings) => {
         if (mounted) setAutoSaveDelay(settings.autoSaveDelayMs);
+      })
+      .catch(() => {});
+    void invoke<InstalledApp[]>('list_installed_apps')
+      .then((apps) => {
+        if (mounted) setInstalledApps(apps);
       })
       .catch(() => {});
     return () => {
@@ -149,6 +171,9 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
 
         setName(workflow.name || EMPTY_WORKFLOW.name);
         setDescription(workflow.description || '');
+        setKind((workflow.kind as WorkflowKind) || 'desktop');
+        setBaseAppId(workflow.baseAppId || '');
+        setEntryHotkey(workflow.entryHotkey || '');
         setTagsInput((workflow.tags || []).join(', '));
         setFavorite(Boolean(workflow.favorite));
         setNodes(nextNodes);
@@ -158,6 +183,9 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
           workflowId: nextId,
           name: workflow.name || EMPTY_WORKFLOW.name,
           description: workflow.description || '',
+          kind: (workflow.kind as WorkflowKind) || 'desktop',
+          baseAppId: workflow.baseAppId || '',
+          entryHotkey: workflow.entryHotkey || '',
           tags: workflow.tags || [],
           favorite: Boolean(workflow.favorite),
           nodes: nextNodes,
@@ -187,6 +215,9 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
     const payload: Workflow = {
       name: snapshot.name.trim() || EMPTY_WORKFLOW.name,
       description: snapshot.description,
+      kind: snapshot.kind,
+      baseAppId: snapshot.baseAppId,
+      entryHotkey: snapshot.entryHotkey,
       tags: snapshot.tags,
       favorite: snapshot.favorite,
       nodes: snapshot.nodes.map(fromReactFlowNode),
@@ -240,7 +271,7 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [autoSaveDelay, name, description, tagsInput, favorite, nodes, edges]);
+  }, [autoSaveDelay, name, description, kind, baseAppId, entryHotkey, tagsInput, favorite, nodes, edges]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -276,6 +307,26 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
             onChange={(event) => setDescription(event.target.value)}
             placeholder="Describe what this workflow does"
           />
+          {kind === 'inApp' ? (
+            <div className="builder-in-app-meta">
+              <label className="field" style={{ marginTop: 0 }}>
+                <span>Base app</span>
+                <AppPicker
+                  apps={installedApps.filter((app) => ['vscode', 'cursor', 'antigravity'].includes(app.id))}
+                  value={baseAppId}
+                  onChange={(app) => setBaseAppId(app.id)}
+                />
+              </label>
+              <label className="field" style={{ marginTop: 0 }}>
+                <span>Entry hotkey</span>
+                <input
+                  value={entryHotkey}
+                  onChange={(event) => setEntryHotkey(event.target.value)}
+                  placeholder="ctrl+shift+i"
+                />
+              </label>
+            </div>
+          ) : null}
         </div>
 
         <div className="builder-actions">
@@ -285,6 +336,15 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
             onChange={(event) => setTagsInput(event.target.value)}
             placeholder="Tags, comma separated"
           />
+          <select
+            className="builder-chip"
+            value={kind}
+            onChange={(event) => setKind(event.target.value as WorkflowKind)}
+            title="Workflow type"
+          >
+            <option value="desktop">Desktop</option>
+            <option value="inApp">In-app</option>
+          </select>
           <button
             type="button"
             className={`favorite-toggle ${favorite ? 'is-active' : ''}`}
@@ -312,6 +372,7 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
 
       <div className="builder-statusbar">
         <span>{currentId ? `Workflow ID: ${currentId}` : 'Unsaved workflow'}</span>
+        <span>{kind === 'inApp' ? `In-app trigger: ${baseAppId || 'pick app'} / ${entryHotkey || 'pick hotkey'}` : 'Desktop workflow'}</span>
         <span>{saving ? 'Saving...' : 'All changes synced'}</span>
         {saveError ? <span className="status-error">{saveError}</span> : null}
       </div>
@@ -326,6 +387,7 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
           setEdges(nextEdges);
         }}
         onBeforeRun={() => persist(true)}
+        workflowKind={kind}
       />
     </div>
   );
