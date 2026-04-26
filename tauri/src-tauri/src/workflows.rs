@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
 use uuid::Uuid;
+#[cfg(windows)]
 use windows::Win32::{
     Foundation::{CloseHandle, HWND},
     System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION},
@@ -27,6 +28,7 @@ use windows::Win32::{
         WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId},
     },
 };
+
 
 use crate::macro_engine;
 
@@ -1674,6 +1676,7 @@ async fn call_local_model_json(
     Ok(extract_json_text(content))
 }
 
+#[cfg(windows)]
 fn parse_hotkey_keys(hotkey: &str) -> Vec<String> {
     hotkey
         .split('+')
@@ -1682,6 +1685,7 @@ fn parse_hotkey_keys(hotkey: &str) -> Vec<String> {
         .collect()
 }
 
+#[cfg(windows)]
 fn modifier_vk(key: &str) -> Option<i32> {
     match key {
         "ctrl" | "control" => Some(VK_CONTROL.0 as i32),
@@ -1692,6 +1696,7 @@ fn modifier_vk(key: &str) -> Option<i32> {
     }
 }
 
+#[cfg(windows)]
 fn primary_vk(key: &str) -> Option<i32> {
     match key {
         "enter" | "return" => Some(VK_RETURN.0 as i32),
@@ -1715,10 +1720,12 @@ fn primary_vk(key: &str) -> Option<i32> {
     }
 }
 
+#[cfg(windows)]
 fn is_vk_pressed(vk: i32) -> bool {
     unsafe { GetAsyncKeyState(vk) < 0 }
 }
 
+#[cfg(windows)]
 fn hotkey_is_pressed(hotkey: &str) -> bool {
     let parts = parse_hotkey_keys(hotkey);
     if parts.is_empty() {
@@ -1741,6 +1748,14 @@ fn hotkey_is_pressed(hotkey: &str) -> bool {
     main_key.is_some_and(is_vk_pressed)
 }
 
+#[cfg(not(windows))]
+fn is_vk_pressed(_vk: i32) -> bool { false }
+
+#[cfg(not(windows))]
+fn hotkey_is_pressed(_hotkey: &str) -> bool { false }
+
+
+#[cfg(windows)]
 fn foreground_process_name() -> Option<String> {
     let hwnd: HWND = unsafe { GetForegroundWindow() };
     if hwnd.0.is_null() {
@@ -1775,6 +1790,10 @@ fn foreground_process_name() -> Option<String> {
         .and_then(|value| value.to_str())
         .map(|value| value.to_ascii_lowercase())
 }
+
+#[cfg(not(windows))]
+fn foreground_process_name() -> Option<String> { None }
+
 
 fn app_matches_process(app_id: &str, process_name: &str) -> bool {
     let process_name = process_name.to_ascii_lowercase();

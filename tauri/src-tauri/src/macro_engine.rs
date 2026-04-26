@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 use tauri::AppHandle;
+#[cfg(windows)]
 use windows::{
     core::PCWSTR,
     Win32::{
@@ -19,6 +20,7 @@ use windows::{
         },
     },
 };
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -122,6 +124,7 @@ fn optional_working_directory(path: Option<String>) -> Result<Option<PathBuf>, S
     }
 }
 
+#[cfg(windows)]
 fn shell_execute_open(path: &str, args: &[String], verb: &str) -> Result<(), String> {
     let file = to_wide(path);
     let parameters_string = if args.is_empty() {
@@ -154,6 +157,12 @@ fn shell_execute_open(path: &str, args: &[String], verb: &str) -> Result<(), Str
     Ok(())
 }
 
+#[cfg(not(windows))]
+fn shell_execute_open(_path: &str, _args: &[String], _verb: &str) -> Result<(), String> {
+    Err("ShellExecute is only supported on Windows.".into())
+}
+
+
 fn run_shell_command(
     command: &str,
     working_directory: Option<String>,
@@ -162,17 +171,27 @@ fn run_shell_command(
     let working_directory = optional_working_directory(working_directory)?;
 
     if admin {
-        let mut segments = Vec::new();
-        if let Some(dir) = &working_directory {
-            segments.push(format!("cd /d \"{}\"", dir.display()));
+        #[cfg(windows)]
+        {
+            let mut segments = Vec::new();
+            if let Some(dir) = &working_directory {
+                segments.push(format!("cd /d \"{}\"", dir.display()));
+            }
+            segments.push(command.to_string());
+            shell_execute_open("cmd.exe", &["/C".into(), segments.join(" && ")], "runas")?;
+            return Ok("Started elevated command.".into());
         }
-        segments.push(command.to_string());
-        shell_execute_open("cmd.exe", &["/C".into(), segments.join(" && ")], "runas")?;
-        return Ok("Started elevated command.".into());
+        #[cfg(not(windows))]
+        {
+            return Err("Elevated commands are currently only supported on Windows.".into());
+        }
     }
 
-    let mut process = Command::new("cmd");
-    process.arg("/C").arg(command);
+    let shell = if cfg!(windows) { "cmd" } else { "sh" };
+    let arg = if cfg!(windows) { "/C" } else { "-c" };
+
+    let mut process = Command::new(shell);
+    process.arg(arg).arg(command);
 
     if let Some(dir) = &working_directory {
         process.current_dir(dir);
@@ -195,6 +214,7 @@ fn run_shell_command(
     }
 }
 
+
 fn execute_action(action: MacroAction) -> Result<(), String> {
     match action {
         MacroAction::MoveMouse { x, y } => move_mouse(x, y),
@@ -216,20 +236,38 @@ fn execute_action(action: MacroAction) -> Result<(), String> {
 
 #[tauri::command]
 pub fn is_running_as_admin() -> Result<bool, String> {
-    Ok(unsafe { IsUserAnAdmin().as_bool() })
+    #[cfg(windows)]
+    {
+        Ok(unsafe { IsUserAnAdmin().as_bool() })
+    }
+    #[cfg(not(windows))]
+    {
+        // On Unix, we could check UID, but for now let's just return false
+        Ok(false)
+    }
 }
+
 
 #[tauri::command]
 pub fn restart_as_admin(app: AppHandle) -> Result<String, String> {
-    let exe_path = std::env::current_exe().map_err(|error| error.to_string())?;
-    let exe = exe_path
-        .to_str()
-        .ok_or_else(|| "Executable path contains invalid UTF-16 data.".to_string())?;
+    #[cfg(windows)]
+    {
+        let exe_path = std::env::current_exe().map_err(|error| error.to_string())?;
+        let exe = exe_path
+            .to_str()
+            .ok_or_else(|| "Executable path contains invalid UTF-16 data.".to_string())?;
 
-    shell_execute_open(exe, &[], "runas")?;
-    app.exit(0);
-    Ok("Restarting as Administrator.".into())
+        shell_execute_open(exe, &[], "runas")?;
+        app.exit(0);
+        Ok("Restarting as Administrator.".into())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app; // silence unused warning
+        Err("Restarting as admin is only supported on Windows.".into())
+    }
 }
+
 
 #[tauri::command]
 pub fn move_mouse(x: i32, y: i32) -> Result<(), String> {
