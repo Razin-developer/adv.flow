@@ -107,38 +107,61 @@ fn ps_quote(value: &str) -> String {
 
 fn start_new_terminal(shell_type: &str, cwd: &Path, command: &str) -> Result<(), String> {
     let cwd_text = cwd.to_string_lossy();
-    if shell_type == "cmd" {
+    
+    if cfg!(windows) {
+        if shell_type == "cmd" {
+            Command::new("cmd")
+                .args([
+                    "/c",
+                    "start",
+                    "",
+                    "cmd",
+                    "/k",
+                    &format!("cd /d \"{}\" && {}", cwd_text, command),
+                ])
+                .spawn()
+                .map_err(|error| error.to_string())?;
+            return Ok(());
+        }
+
         Command::new("cmd")
             .args([
                 "/c",
                 "start",
                 "",
-                "cmd",
-                "/k",
-                &format!("cd /d \"{}\" && {}", cwd_text, command),
+                "powershell",
+                "-NoExit",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &format!("Set-Location -LiteralPath {}; {}", ps_quote(&cwd_text), command),
             ])
             .spawn()
             .map_err(|error| error.to_string())?;
-        return Ok(());
-    }
+    } else {
+        // macOS/Linux
+        let terminal = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "x-terminal-emulator"
+        };
+        
+        let args = if cfg!(target_os = "macos") {
+            vec!["-a", "Terminal", "."] // Open terminal in current dir
+        } else {
+            vec!["-e", "sh", "-c", command]
+        };
 
-    Command::new("cmd")
-        .args([
-            "/c",
-            "start",
-            "",
-            "powershell",
-            "-NoExit",
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            &format!("Set-Location -LiteralPath {}; {}", ps_quote(&cwd_text), command),
-        ])
-        .spawn()
-        .map_err(|error| error.to_string())?;
+        Command::new(terminal)
+            .args(&args)
+            .current_dir(cwd)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
     Ok(())
 }
+
 
 fn run_command_node(data: &Value) -> Result<(), String> {
     let command = string_field(data, "command");
@@ -154,17 +177,27 @@ fn run_command_node(data: &Value) -> Result<(), String> {
         return start_new_terminal(shell_type, &cwd, command);
     }
 
-    let status = if shell_type == "cmd" {
-        Command::new("cmd")
-            .args(["/c", command])
-            .current_dir(cwd)
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()
+    let status = if cfg!(windows) {
+        if shell_type == "cmd" {
+            Command::new("cmd")
+                .args(["/c", command])
+                .current_dir(cwd)
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+        } else {
+            Command::new("powershell")
+                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command])
+                .current_dir(cwd)
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+        }
     } else {
-        Command::new("powershell")
-            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command])
+        Command::new("sh")
+            .args(["-c", command])
             .current_dir(cwd)
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
@@ -172,6 +205,7 @@ fn run_command_node(data: &Value) -> Result<(), String> {
             .status()
     }
     .map_err(|error| error.to_string())?;
+
 
     if status.success() {
         Ok(())
@@ -193,47 +227,68 @@ fn open_app_node(data: &Value) -> Result<(), String> {
         return Err("App command is empty".to_string());
     }
 
-    if command.to_ascii_lowercase().ends_with(".lnk") {
-        Command::new("cmd")
-            .args(["/c", "start", "", command, folder])
+    if cfg!(windows) {
+        if command.to_ascii_lowercase().ends_with(".lnk") {
+            Command::new("cmd")
+                .args(["/c", "start", "", command, folder])
+                .spawn()
+                .map_err(|error| error.to_string())?;
+            return Ok(());
+        }
+
+        let script = if folder.trim().is_empty() {
+            format!("Start-Process -FilePath {}", ps_quote(command))
+        } else {
+            format!(
+                "Start-Process -FilePath {} -ArgumentList @({})",
+                ps_quote(command),
+                ps_quote(folder)
+            )
+        };
+        Command::new("powershell")
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
             .spawn()
             .map_err(|error| error.to_string())?;
-        return Ok(());
-    }
-
-    let script = if folder.trim().is_empty() {
-        format!("Start-Process -FilePath {}", ps_quote(command))
     } else {
-        format!(
-            "Start-Process -FilePath {} -ArgumentList @({})",
-            ps_quote(command),
-            ps_quote(folder)
-        )
-    };
-    Command::new("powershell")
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
-        .spawn()
-        .map_err(|error| error.to_string())?;
+        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        let mut process = Command::new(opener);
+        process.arg(command);
+        if !folder.trim().is_empty() {
+            process.arg(folder);
+        }
+        process.spawn().map_err(|error| error.to_string())?;
+    }
     Ok(())
 }
+
 
 fn open_browser_node(data: &Value) -> Result<(), String> {
     let url = string_field(data, "url");
     if url.trim().is_empty() {
         return Err("URL is empty".to_string());
     }
-    let browser = match string_field(data, "browser") {
-        "edge" => "msedge",
-        "brave" => "brave",
-        "comet" => "comet",
-        _ => "chrome",
-    };
-    Command::new("cmd")
-        .args(["/c", "start", "", browser, url])
-        .spawn()
-        .map_err(|error| error.to_string())?;
+    
+    if cfg!(windows) {
+        let browser = match string_field(data, "browser") {
+            "edge" => "msedge",
+            "brave" => "brave",
+            "comet" => "comet",
+            _ => "chrome",
+        };
+        Command::new("cmd")
+            .args(["/c", "start", "", browser, url])
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    } else {
+        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        Command::new(opener)
+            .arg(url)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
     Ok(())
 }
+
 
 fn run_node(node: &Value) -> Result<(), String> {
     let data = data_for_node(node);
