@@ -40,7 +40,24 @@ jobs:
         run: npm install
         working-directory: tauri
 
+      - name: Build and Stage CLI Sidecar
+        shell: bash
+        run: |
+          # Get target triple
+          TRIPLE=$(rustc -vV | grep host | cut -d ' ' -f 2)
+          BIN_EXT=""
+          if [[ "$TRIPLE" == *"windows"* ]]; then BIN_EXT=".exe"; fi
+          
+          echo "Building CLI for $TRIPLE..."
+          cd tauri/src-tauri
+          cargo build --release --bin advflow-cli
+          
+          mkdir -p binaries
+          cp target/release/advflow-cli${BIN_EXT} binaries/advflow-cli-${TRIPLE}${BIN_EXT}
+          echo "Successfully staged sidecar: binaries/advflow-cli-${TRIPLE}${BIN_EXT}"
+
       - uses: tauri-apps/tauri-action@v0
+
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
