@@ -1749,10 +1749,68 @@ fn hotkey_is_pressed(hotkey: &str) -> bool {
 }
 
 #[cfg(not(windows))]
-fn is_vk_pressed(_vk: i32) -> bool { false }
+fn is_vk_pressed(key_name: &str) -> bool {
+    use device_query::{DeviceQuery, DeviceState, Keycode};
+    let device_state = DeviceState::new();
+    let keys = device_state.get_keys();
+    
+    let target = match key_name.to_lowercase().as_str() {
+        "ctrl" | "control" => Keycode::Control,
+        "alt" | "menu" => Keycode::Alt,
+        "shift" => Keycode::Shift,
+        "win" | "command" | "meta" => Keycode::Meta,
+        "enter" | "return" => Keycode::Enter,
+        "space" => Keycode::Space,
+        "tab" => Keycode::Tab,
+        "f1" => Keycode::F1,
+        "f2" => Keycode::F2,
+        "f3" => Keycode::F3,
+        "f4" => Keycode::F4,
+        "f5" => Keycode::F5,
+        "f6" => Keycode::F6,
+        "f7" => Keycode::F7,
+        "f8" => Keycode::F8,
+        "f9" => Keycode::F9,
+        "f10" => Keycode::F10,
+        "f11" => Keycode::F11,
+        "f12" => Keycode::F12,
+        other if other.len() == 1 => {
+            let ch = other.chars().next().unwrap().to_ascii_uppercase();
+            match ch {
+                'A' => Keycode::A, 'B' => Keycode::B, 'C' => Keycode::C, 'D' => Keycode::D,
+                'E' => Keycode::E, 'F' => Keycode::F, 'G' => Keycode::G, 'H' => Keycode::H,
+                'I' => Keycode::I, 'J' => Keycode::J, 'K' => Keycode::K, 'L' => Keycode::L,
+                'M' => Keycode::M, 'N' => Keycode::N, 'O' => Keycode::O, 'P' => Keycode::P,
+                'Q' => Keycode::Q, 'R' => Keycode::R, 'S' => Keycode::S, 'T' => Keycode::T,
+                'U' => Keycode::U, 'V' => Keycode::V, 'W' => Keycode::W, 'X' => Keycode::X,
+                'Y' => Keycode::Y, 'Z' => Keycode::Z,
+                '0' => Keycode::Key0, '1' => Keycode::Key1, '2' => Keycode::Key2, '3' => Keycode::Key3,
+                '4' => Keycode::Key4, '5' => Keycode::Key5, '6' => Keycode::Key6, '7' => Keycode::Key7,
+                '8' => Keycode::Key8, '9' => Keycode::Key9,
+                _ => return false,
+            }
+        }
+        _ => return false,
+    };
+    
+    keys.contains(&target)
+}
 
 #[cfg(not(windows))]
-fn hotkey_is_pressed(_hotkey: &str) -> bool { false }
+fn hotkey_is_pressed(hotkey: &str) -> bool {
+    let parts: Vec<&str> = hotkey.split('+').map(|s| s.trim()).collect();
+    if parts.is_empty() {
+        return false;
+    }
+
+    for part in parts {
+        if !is_vk_pressed(part) {
+            return false;
+        }
+    }
+    true
+}
+
 
 
 #[cfg(windows)]
@@ -1792,7 +1850,30 @@ fn foreground_process_name() -> Option<String> {
 }
 
 #[cfg(not(windows))]
-fn foreground_process_name() -> Option<String> { None }
+fn foreground_process_name() -> Option<String> {
+    if cfg!(target_os = "macos") {
+        let output = Command::new("osascript")
+            .args(["-e", "tell application \"System Events\" to get name of first process whose frontmost is true"])
+            .output()
+            .ok()?;
+        
+        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if name.is_empty() { None } else { Some(name.to_lowercase()) }
+    } else if cfg!(target_os = "linux") {
+        // Try xprop (X11)
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg("xprop -id $(xprop -root _NET_ACTIVE_WINDOW | cut -d ' ' -f 5) WM_CLASS | cut -d '\"' -f 4")
+            .output()
+            .ok()?;
+            
+        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if name.is_empty() { None } else { Some(name.to_lowercase()) }
+    } else {
+        None
+    }
+}
+
 
 
 fn app_matches_process(app_id: &str, process_name: &str) -> bool {

@@ -242,10 +242,10 @@ pub fn is_running_as_admin() -> Result<bool, String> {
     }
     #[cfg(not(windows))]
     {
-        // On Unix, we could check UID, but for now let's just return false
-        Ok(false)
+        Ok(unsafe { libc::getuid() == 0 })
     }
 }
+
 
 
 #[tauri::command]
