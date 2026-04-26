@@ -994,6 +994,7 @@ fn build_workflow_from_scan(
 ) -> Workflow {
     let mut nodes: Vec<Value> = Vec::new();
     let mut edges: Vec<Value> = Vec::new();
+    #[allow(unused_assignments)]
     let mut prev_id: Option<String> = None;
     let mut y: i32 = 80;
     let step: i32 = 110;
@@ -1755,10 +1756,10 @@ fn is_vk_pressed(key_name: &str) -> bool {
     let keys = device_state.get_keys();
     
     let target = match key_name.to_lowercase().as_str() {
-        "ctrl" | "control" => Keycode::Control,
-        "alt" | "menu" => Keycode::Alt,
-        "shift" => Keycode::Shift,
-        "win" | "command" | "meta" => Keycode::Meta,
+        "ctrl" | "control" => Keycode::LControl,
+        "alt" | "menu" => Keycode::LAlt,
+        "shift" => Keycode::LShift,
+        "win" | "command" | "meta" => Keycode::LMeta,
         "enter" | "return" => Keycode::Enter,
         "space" => Keycode::Space,
         "tab" => Keycode::Tab,

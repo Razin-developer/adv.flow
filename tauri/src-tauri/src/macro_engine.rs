@@ -70,7 +70,9 @@ fn parse_key(key: &str) -> Result<Key, String> {
         "enter" | "return" => Key::Return,
         "esc" | "escape" => Key::Escape,
         "home" => Key::Home,
+        #[cfg(windows)]
         "insert" | "ins" => Key::Insert,
+
         "left" | "leftarrow" | "arrowleft" => Key::LeftArrow,
         "meta" | "super" | "win" | "windows" | "cmd" | "command" => Key::Meta,
         "pagedown" | "page_down" => Key::PageDown,
