@@ -50,7 +50,7 @@ export default function DownloadModal({ isOpen, onClose, release }: DownloadModa
           <div className="form-container">
             <DownloadLeadForm
               platform={`${release.os} (${release.arch})`}
-              releaseUrl={release.url}
+              releaseUrl={"https://github.com/Razin-developer/adv.flow/releases"}
               buttonLabel="Start Download"
             />
           </div>
