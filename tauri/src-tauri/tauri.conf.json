@@ -30,7 +30,14 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "nsis",
+      "deb",
+      "appimage",
+      "dmg",
+      "app"
+    ],
+
     "externalBin": [
       "binaries/advflow-cli"
     ],
