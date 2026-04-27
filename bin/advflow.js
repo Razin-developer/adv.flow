@@ -93,6 +93,16 @@ function psQuote(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
+function shQuote(value) {
+  return `'${String(value).replace(/'/g, `'\"'\"'`)}'`;
+}
+
+function commandExists(command) {
+  const probe = process.platform === "win32" ? "where" : "which";
+  const result = spawnSync(probe, [command], { stdio: "ignore" });
+  return result.status === 0;
+}
+
 function runDetached(command, args) {
   const child = spawn(command, args, {
     detached: true,
@@ -108,34 +118,71 @@ function runCommand(data) {
     throw new Error("Command is empty");
   }
 
-  const shell = data.shellType === "cmd" ? "cmd" : "powershell";
+  const shell = data.shellType || (process.platform === "win32" ? "powershell" : "system");
   const cwd = resolveWorkingDirectory(data.workingDirectory);
 
   if (data.terminalType === "newWindow") {
-    if (shell === "cmd") {
+    if (process.platform === "win32" && shell === "cmd") {
       runDetached("cmd", ["/c", "start", "", "cmd", "/k", `cd /d "${cwd}" && ${command}`]);
       return;
     }
-    runDetached("cmd", [
-      "/c",
-      "start",
-      "",
-      "powershell",
-      "-NoExit",
-      "-NoProfile",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-Command",
-      `Set-Location -LiteralPath ${psQuote(cwd)}; ${command}`,
-    ]);
+    if (process.platform === "win32") {
+      runDetached("cmd", [
+        "/c",
+        "start",
+        "",
+        "powershell",
+        "-NoExit",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        `Set-Location -LiteralPath ${psQuote(cwd)}; ${command}`,
+      ]);
+      return;
+    }
+    if (process.platform === "darwin") {
+      runDetached("osascript", [
+        "-e",
+        `tell application "Terminal" to do script "cd ${cwd.replace(/\\/g, "\\\\").replace(/"/g, '\\"')} ; ${command.replace(/\\/g, "\\\\").replace(/"/g, '\\"')} ; exec $SHELL -l"`,
+        "-e",
+        `tell application "Terminal" to activate`,
+      ]);
+      return;
+    }
+    const script = `cd ${shQuote(cwd)} && ${command}; exec $SHELL -l`;
+    const launchers = [
+      ["x-terminal-emulator", ["-e", "sh", "-lc", script]],
+      ["gnome-terminal", ["--", "sh", "-lc", script]],
+      ["konsole", ["--workdir", cwd, "-e", "sh", "-lc", script]],
+      ["kitty", ["--directory", cwd, "sh", "-lc", script]],
+      ["alacritty", ["--working-directory", cwd, "-e", "sh", "-lc", script]],
+      ["wezterm", ["start", "--cwd", cwd, "sh", "-lc", script]],
+      ["xterm", ["-e", "sh", "-lc", script]],
+    ];
+    const found = launchers.find(([launcher]) => commandExists(launcher));
+    if (!found) {
+      throw new Error("No supported terminal application was found on this Linux system.");
+    }
+    runDetached(found[0], found[1]);
     return;
   }
 
-  const args =
+  const [shellCommand, args] =
     shell === "cmd"
-      ? ["/c", command]
-      : ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command];
-  const result = spawnSync(shell, args, {
+      ? ["cmd", ["/c", command]]
+      : shell === "powershell"
+        ? ["powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command]]
+        : shell === "pwsh"
+          ? ["pwsh", ["-NoProfile", "-Command", command]]
+          : shell === "bash"
+            ? ["bash", ["-lc", command]]
+            : shell === "zsh"
+              ? ["zsh", ["-lc", command]]
+              : shell === "sh"
+                ? ["sh", ["-lc", command]]
+                : [process.env.SHELL || "sh", ["-lc", command]];
+  const result = spawnSync(shellCommand, args, {
     cwd,
     stdio: "inherit",
     shell: false,
@@ -165,19 +212,38 @@ function runOpenApp(data) {
   }
 
   const args = buildOpenAppArgs(data, folder);
-  if (/\.lnk$/i.test(file)) {
+  if (process.platform === "win32" && /\.lnk$/i.test(file)) {
     runDetached("cmd", ["/c", "start", "", file, ...args]);
     return;
   }
-
-  const psArgs = args.length ? ` -ArgumentList @(${args.map(psQuote).join(", ")})` : "";
-  runDetached("powershell", [
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-Command",
-    `Start-Process -FilePath ${psQuote(file)}${psArgs}`,
-  ]);
+  if (process.platform === "win32") {
+    const psArgs = args.length ? ` -ArgumentList @(${args.map(psQuote).join(", ")})` : "";
+    runDetached("powershell", [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      `Start-Process -FilePath ${psQuote(file)}${psArgs}`,
+    ]);
+    return;
+  }
+  if (process.platform === "darwin") {
+    if (/\.app$/i.test(file)) {
+      runDetached("open", ["-a", file, ...args]);
+      return;
+    }
+    if (fs.existsSync(file) || commandExists(file)) {
+      runDetached(file, args);
+      return;
+    }
+    runDetached("open", [file]);
+    return;
+  }
+  if (fs.existsSync(file) || commandExists(file)) {
+    runDetached(file, args);
+    return;
+  }
+  runDetached("xdg-open", [folder || file]);
 }
 
 function runOpenBrowser(data) {
@@ -185,9 +251,31 @@ function runOpenBrowser(data) {
   if (!url) {
     throw new Error("URL is empty");
   }
-  const browser =
-    data.browser === "edge" ? "msedge" : data.browser === "brave" ? "brave" : data.browser === "comet" ? "comet" : "chrome";
-  runDetached("cmd", ["/c", "start", "", browser, url]);
+  if (process.platform === "win32") {
+    const browser =
+      data.browser === "edge" ? "msedge" : data.browser === "brave" ? "brave" : data.browser === "comet" ? "comet" : data.browser === "firefox" ? "firefox" : "chrome";
+    runDetached("cmd", ["/c", "start", "", browser, url]);
+    return;
+  }
+  if (process.platform === "darwin") {
+    const app =
+      data.browser === "chrome" ? "Google Chrome"
+        : data.browser === "edge" ? "Microsoft Edge"
+          : data.browser === "brave" ? "Brave Browser"
+            : data.browser === "firefox" ? "Firefox"
+              : data.browser === "safari" ? "Safari"
+                : null;
+    runDetached("open", app ? ["-a", app, url] : [url]);
+    return;
+  }
+  const candidates =
+    data.browser === "chrome" ? ["google-chrome", "chromium", "chromium-browser"]
+      : data.browser === "edge" ? ["microsoft-edge", "microsoft-edge-stable"]
+        : data.browser === "brave" ? ["brave-browser", "brave"]
+          : data.browser === "firefox" ? ["firefox"]
+            : [];
+  const browser = candidates.find((candidate) => commandExists(candidate));
+  runDetached(browser || "xdg-open", [url]);
 }
 
 function runNode(node) {

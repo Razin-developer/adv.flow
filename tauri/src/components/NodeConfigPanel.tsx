@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import type { Node } from 'reactflow';
 import { invoke } from '@tauri-apps/api/core';
-import { BROWSERS } from '@/lib/plugins';
+import { BROWSERS, getDefaultShell, getShellOptions } from '@/lib/plugins';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Sparkles } from 'lucide-react';
 import { useAppDialog } from '@/components/AppDialog';
@@ -159,9 +159,12 @@ export default function NodeConfigPanel({ node, onChange }: NodeConfigPanelProps
             </label>
             <label className="field">
               <span>Shell</span>
-              <select value={node.data.shellType || 'cmd'} onChange={(event) => updateField('shellType', event.target.value)}>
-                <option value="cmd">Command Prompt</option>
-                <option value="powershell">PowerShell</option>
+              <select value={node.data.shellType || getDefaultShell()} onChange={(event) => updateField('shellType', event.target.value)}>
+                {getShellOptions().map((shell) => (
+                  <option key={shell.id} value={shell.id}>
+                    {shell.name}
+                  </option>
+                ))}
               </select>
             </label>
           </>
@@ -175,7 +178,7 @@ export default function NodeConfigPanel({ node, onChange }: NodeConfigPanelProps
             </label>
             <label className="field">
               <span>Browser</span>
-              <select value={node.data.browser || 'chrome'} onChange={(event) => updateField('browser', event.target.value)}>
+              <select value={node.data.browser || 'system'} onChange={(event) => updateField('browser', event.target.value)}>
                 {BROWSERS.map((browser) => (
                   <option key={browser.id} value={browser.id}>
                     {browser.name}

@@ -4,6 +4,7 @@ import { Save } from "lucide-react";
 import AppShell from "@/components/AppShell";
 import { useAppDialog } from "@/components/AppDialog";
 import { BROWSERS, PLUGINS } from "@/lib/plugins";
+import type { InstalledApp } from "@/types/workflow";
 import type { AppSettings } from "@/types/settings";
 
 export default function SettingsPage({
@@ -25,11 +26,18 @@ export default function SettingsPage({
   const [busy, setBusy] = useState<null | "save" | "test" | "push" | "pull">(null);
   const [localModels, setLocalModels] = useState<string[]>([]);
   const [loadingLocalModels, setLoadingLocalModels] = useState(false);
+  const [installedApps, setInstalledApps] = useState<InstalledApp[]>([]);
 
   useEffect(() => {
     setDraft(settings);
     setLocalModels(settings.localModelName ? [settings.localModelName] : []);
   }, [settings]);
+
+  useEffect(() => {
+    void invoke<InstalledApp[]>("list_installed_apps")
+      .then(setInstalledApps)
+      .catch(() => setInstalledApps([]));
+  }, []);
 
   const setField = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -70,6 +78,9 @@ export default function SettingsPage({
       setLoadingLocalModels(false);
     }
   }
+
+  const editorOptions = installedApps.filter((app) => ["vscode", "cursor", "antigravity"].includes(app.id));
+  const fallbackEditors = PLUGINS.filter((plugin) => !editorOptions.some((app) => app.id === plugin.id));
 
   return (
     <AppShell
@@ -309,7 +320,12 @@ export default function SettingsPage({
                 value={draft.preferredEditor}
                 onChange={(event) => setField("preferredEditor", event.target.value)}
               >
-                {PLUGINS.map((plugin) => (
+                {editorOptions.map((app) => (
+                  <option key={app.id} value={app.id}>
+                    {app.name}
+                  </option>
+                ))}
+                {fallbackEditors.map((plugin) => (
                   <option key={plugin.id} value={plugin.id}>
                     {plugin.name}
                   </option>

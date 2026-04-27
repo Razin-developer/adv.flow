@@ -105,6 +105,60 @@ fn ps_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
+fn sh_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn command_exists(command: &str) -> bool {
+    let lookup = if cfg!(windows) { "where" } else { "which" };
+    Command::new(lookup)
+        .arg(command)
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn shell_command_and_args(shell_type: &str, command: &str) -> (String, Vec<String>) {
+    match shell_type {
+        "cmd" => ("cmd".to_string(), vec!["/c".to_string(), command.to_string()]),
+        "powershell" => (
+            "powershell".to_string(),
+            vec![
+                "-NoProfile".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+                "-Command".to_string(),
+                command.to_string(),
+            ],
+        ),
+        "pwsh" => (
+            "pwsh".to_string(),
+            vec!["-NoProfile".to_string(), "-Command".to_string(), command.to_string()],
+        ),
+        "bash" => ("bash".to_string(), vec!["-lc".to_string(), command.to_string()]),
+        "zsh" => ("zsh".to_string(), vec!["-lc".to_string(), command.to_string()]),
+        "sh" => ("sh".to_string(), vec!["-lc".to_string(), command.to_string()]),
+        _ => {
+            if cfg!(windows) {
+                (
+                    "powershell".to_string(),
+                    vec![
+                        "-NoProfile".to_string(),
+                        "-ExecutionPolicy".to_string(),
+                        "Bypass".to_string(),
+                        "-Command".to_string(),
+                        command.to_string(),
+                    ],
+                )
+            } else if let Ok(user_shell) = env::var("SHELL") {
+                (user_shell, vec!["-lc".to_string(), command.to_string()])
+            } else {
+                ("sh".to_string(), vec!["-lc".to_string(), command.to_string()])
+            }
+        }
+    }
+}
+
 fn start_new_terminal(shell_type: &str, cwd: &Path, command: &str) -> Result<(), String> {
     let cwd_text = cwd.to_string_lossy();
     
@@ -139,25 +193,62 @@ fn start_new_terminal(shell_type: &str, cwd: &Path, command: &str) -> Result<(),
             ])
             .spawn()
             .map_err(|error| error.to_string())?;
-    } else {
-        // macOS/Linux
-        let terminal = if cfg!(target_os = "macos") {
-            "open"
-        } else {
-            "x-terminal-emulator"
-        };
-        
-        let args = if cfg!(target_os = "macos") {
-            vec!["-a", "Terminal", "."] // Open terminal in current dir
-        } else {
-            vec!["-e", "sh", "-c", command]
-        };
-
-        Command::new(terminal)
-            .args(&args)
-            .current_dir(cwd)
+    } else if cfg!(target_os = "macos") {
+        let script = format!(
+            "tell application \"Terminal\" to do script \"cd {} ; {}; exec $SHELL -l\"\ntell application \"Terminal\" to activate",
+            cwd_text.replace('\\', "\\\\").replace('"', "\\\""),
+            command.replace('\\', "\\\\").replace('"', "\\\"")
+        );
+        Command::new("osascript")
+            .arg("-e")
+            .arg(script)
             .spawn()
             .map_err(|error| error.to_string())?;
+    } else {
+        let script = format!("cd {} && {}; exec $SHELL -l", sh_quote(&cwd_text), command);
+        let launchers: [(&str, &[&str]); 8] = [
+            ("x-terminal-emulator", &["-e", "sh", "-lc"]),
+            ("gnome-terminal", &["--", "sh", "-lc"]),
+            ("konsole", &["-e", "sh", "-lc"]),
+            ("xfce4-terminal", &["-e", "sh -lc"]),
+            ("kitty", &["sh", "-lc"]),
+            ("alacritty", &["-e", "sh", "-lc"]),
+            ("wezterm", &["start", "--cwd"]),
+            ("xterm", &["-e", "sh", "-lc"]),
+        ];
+
+        for (launcher, prefix) in launchers {
+            if !command_exists(launcher) {
+                continue;
+            }
+            let mut process = Command::new(launcher);
+            match launcher {
+                "wezterm" => {
+                    process.args(prefix).arg(cwd).arg("sh").arg("-lc").arg(&script);
+                }
+                "kitty" => {
+                    process.arg("--directory").arg(cwd).args(prefix).arg(&script);
+                }
+                "alacritty" => {
+                    process.arg("--working-directory").arg(cwd).args(prefix).arg(&script);
+                }
+                "xfce4-terminal" => {
+                    process.arg("--working-directory").arg(cwd).arg("-e").arg(format!("sh -lc {}", sh_quote(&script)));
+                }
+                "gnome-terminal" => {
+                    process.arg(format!("--working-directory={}", cwd.display())).args(prefix).arg(&script);
+                }
+                "konsole" => {
+                    process.arg("--workdir").arg(cwd).args(prefix).arg(&script);
+                }
+                _ => {
+                    process.current_dir(cwd).args(prefix).arg(&script);
+                }
+            }
+            process.spawn().map_err(|error| error.to_string())?;
+            return Ok(());
+        }
+        return Err("No supported terminal application was found on this Linux system.".to_string());
     }
     Ok(())
 }
@@ -177,33 +268,14 @@ fn run_command_node(data: &Value) -> Result<(), String> {
         return start_new_terminal(shell_type, &cwd, command);
     }
 
-    let status = if cfg!(windows) {
-        if shell_type == "cmd" {
-            Command::new("cmd")
-                .args(["/c", command])
-                .current_dir(cwd)
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .status()
-        } else {
-            Command::new("powershell")
-                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command])
-                .current_dir(cwd)
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .status()
-        }
-    } else {
-        Command::new("sh")
-            .args(["-c", command])
-            .current_dir(cwd)
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()
-    }
+    let (shell_command, shell_args) = shell_command_and_args(shell_type, command);
+    let status = Command::new(shell_command)
+        .args(shell_args)
+        .current_dir(cwd)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
     .map_err(|error| error.to_string())?;
 
 
@@ -249,14 +321,40 @@ fn open_app_node(data: &Value) -> Result<(), String> {
             .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
             .spawn()
             .map_err(|error| error.to_string())?;
-    } else {
-        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-        let mut process = Command::new(opener);
-        process.arg(command);
-        if !folder.trim().is_empty() {
-            process.arg(folder);
+    } else if cfg!(target_os = "macos") {
+        if command.ends_with(".app") {
+            let mut process = Command::new("open");
+            process.arg("-a").arg(command);
+            if !folder.trim().is_empty() {
+                process.arg(folder);
+            }
+            process.spawn().map_err(|error| error.to_string())?;
+        } else if Path::new(command).exists() || command_exists(command) {
+            let mut process = Command::new(command);
+            if !folder.trim().is_empty() {
+                process.arg(folder);
+            }
+            process.spawn().map_err(|error| error.to_string())?;
+        } else {
+            Command::new("open")
+                .arg(command)
+                .spawn()
+                .map_err(|error| error.to_string())?;
         }
-        process.spawn().map_err(|error| error.to_string())?;
+    } else {
+        if Path::new(command).exists() || command_exists(command) {
+            let mut process = Command::new(command);
+            if !folder.trim().is_empty() {
+                process.arg(folder);
+            }
+            process.spawn().map_err(|error| error.to_string())?;
+        } else {
+            let target = if folder.trim().is_empty() { command } else { folder };
+            Command::new("xdg-open")
+                .arg(target)
+                .spawn()
+                .map_err(|error| error.to_string())?;
+        }
     }
     Ok(())
 }
@@ -273,18 +371,46 @@ fn open_browser_node(data: &Value) -> Result<(), String> {
             "edge" => "msedge",
             "brave" => "brave",
             "comet" => "comet",
+            "firefox" => "firefox",
             _ => "chrome",
         };
         Command::new("cmd")
             .args(["/c", "start", "", browser, url])
             .spawn()
             .map_err(|error| error.to_string())?;
+    } else if cfg!(target_os = "macos") {
+        let app_name = match string_field(data, "browser") {
+            "chrome" => Some("Google Chrome"),
+            "edge" => Some("Microsoft Edge"),
+            "brave" => Some("Brave Browser"),
+            "firefox" => Some("Firefox"),
+            "safari" => Some("Safari"),
+            _ => None,
+        };
+        let mut process = Command::new("open");
+        if let Some(app_name) = app_name {
+            process.arg("-a").arg(app_name);
+        }
+        process.arg(url).spawn().map_err(|error| error.to_string())?;
     } else {
-        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-        Command::new(opener)
-            .arg(url)
-            .spawn()
-            .map_err(|error| error.to_string())?;
+        let candidates = match string_field(data, "browser") {
+            "chrome" => vec!["google-chrome", "chromium", "chromium-browser"],
+            "edge" => vec!["microsoft-edge", "microsoft-edge-stable"],
+            "brave" => vec!["brave-browser", "brave"],
+            "firefox" => vec!["firefox"],
+            _ => vec![],
+        };
+        if let Some(browser) = candidates.into_iter().find(|candidate| command_exists(candidate)) {
+            Command::new(browser)
+                .arg(url)
+                .spawn()
+                .map_err(|error| error.to_string())?;
+        } else {
+            Command::new("xdg-open")
+                .arg(url)
+                .spawn()
+                .map_err(|error| error.to_string())?;
+        }
     }
     Ok(())
 }

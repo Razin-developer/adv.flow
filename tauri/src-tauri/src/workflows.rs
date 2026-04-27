@@ -221,7 +221,7 @@ fn validate_settings(settings: &mut AppSettings) {
         settings.ai_provider = "gemini".to_string();
     }
     if settings.preferred_browser.trim().is_empty() {
-        settings.preferred_browser = "chrome".to_string();
+        settings.preferred_browser = "system".to_string();
     }
     if settings.preferred_editor.trim().is_empty() {
         settings.preferred_editor = "vscode".to_string();
@@ -238,30 +238,82 @@ fn configure_launch_on_startup(enabled: bool) {
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
-    if enabled {
-        let _ = Command::new("reg")
-            .args([
-                "add",
-                "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                "/v",
-                "Advflow",
-                "/t",
-                "REG_SZ",
-                "/d",
-                &exe.to_string_lossy(),
-                "/f",
-            ])
-            .output();
-    } else {
-        let _ = Command::new("reg")
-            .args([
-                "delete",
-                "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                "/v",
-                "Advflow",
-                "/f",
-            ])
-            .output();
+    #[cfg(windows)]
+    {
+        if enabled {
+            let _ = Command::new("reg")
+                .args([
+                    "add",
+                    "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                    "/v",
+                    "Advflow",
+                    "/t",
+                    "REG_SZ",
+                    "/d",
+                    &exe.to_string_lossy(),
+                    "/f",
+                ])
+                .output();
+        } else {
+            let _ = Command::new("reg")
+                .args([
+                    "delete",
+                    "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                    "/v",
+                    "Advflow",
+                    "/f",
+                ])
+                .output();
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let agents_dir = PathBuf::from(home).join("Library/LaunchAgents");
+        let agent_path = agents_dir.join("com.advflow.app.plist");
+        if enabled {
+            let _ = fs::create_dir_all(&agents_dir);
+            let plist = format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.advflow.app</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>{}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+  </dict>
+</plist>"#,
+                exe.to_string_lossy()
+            );
+            let _ = fs::write(agent_path, plist);
+        } else {
+            let _ = fs::remove_file(agent_path);
+        }
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let autostart_dir = PathBuf::from(home).join(".config/autostart");
+        let desktop_path = autostart_dir.join("advflow.desktop");
+        if enabled {
+            let _ = fs::create_dir_all(&autostart_dir);
+            let desktop_entry = format!(
+                "[Desktop Entry]\nType=Application\nVersion=1.0\nName=AdvFlow\nExec=\"{}\"\nX-GNOME-Autostart-enabled=true\n",
+                exe.to_string_lossy()
+            );
+            let _ = fs::write(desktop_path, desktop_entry);
+        } else {
+            let _ = fs::remove_file(desktop_path);
+        }
     }
 }
 
@@ -286,7 +338,7 @@ fn workflow_by_id_or_name(workflows: &[Workflow], value: &str) -> Option<Workflo
 }
 
 fn known_app_candidates() -> Vec<InstalledApp> {
-    vec![
+    let mut apps = vec![
         InstalledApp {
             id: "vscode".to_string(),
             name: "Visual Studio Code".to_string(),
@@ -311,6 +363,10 @@ fn known_app_candidates() -> Vec<InstalledApp> {
             path: None,
             source: "path".to_string(),
         },
+    ];
+
+    #[cfg(windows)]
+    apps.extend([
         InstalledApp {
             id: "notepad".to_string(),
             name: "Notepad".to_string(),
@@ -327,15 +383,83 @@ fn known_app_candidates() -> Vec<InstalledApp> {
             path: None,
             source: "windows".to_string(),
         },
-    ]
+    ]);
+
+    #[cfg(target_os = "macos")]
+    apps.extend([
+        InstalledApp {
+            id: "vscode".to_string(),
+            name: "Visual Studio Code".to_string(),
+            command: "open".to_string(),
+            args: vec!["-a".to_string(), "{appPath}".to_string(), "{path}".to_string()],
+            path: Some("/Applications/Visual Studio Code.app".to_string()),
+            source: "applications".to_string(),
+        },
+        InstalledApp {
+            id: "cursor".to_string(),
+            name: "Cursor".to_string(),
+            command: "open".to_string(),
+            args: vec!["-a".to_string(), "{appPath}".to_string(), "{path}".to_string()],
+            path: Some("/Applications/Cursor.app".to_string()),
+            source: "applications".to_string(),
+        },
+        InstalledApp {
+            id: "finder".to_string(),
+            name: "Finder".to_string(),
+            command: "open".to_string(),
+            args: vec!["-a".to_string(), "Finder".to_string(), "{path}".to_string()],
+            path: None,
+            source: "macos".to_string(),
+        },
+        InstalledApp {
+            id: "terminal".to_string(),
+            name: "Terminal".to_string(),
+            command: "open".to_string(),
+            args: vec!["-a".to_string(), "Terminal".to_string(), "{path}".to_string()],
+            path: None,
+            source: "macos".to_string(),
+        },
+    ]);
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    apps.extend([
+        InstalledApp {
+            id: "files".to_string(),
+            name: "Files".to_string(),
+            command: "xdg-open".to_string(),
+            args: vec!["{path}".to_string()],
+            path: None,
+            source: "linux".to_string(),
+        },
+        InstalledApp {
+            id: "terminal".to_string(),
+            name: "Terminal".to_string(),
+            command: "x-terminal-emulator".to_string(),
+            args: vec![],
+            path: None,
+            source: "linux".to_string(),
+        },
+    ]);
+
+    apps
 }
 
 fn command_exists(command: &str) -> bool {
-    Command::new("where")
+    let lookup = if cfg!(windows) { "where" } else { "which" };
+    Command::new(lookup)
         .arg(command)
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
+}
+
+fn app_candidate_available(app: &InstalledApp) -> bool {
+    if let Some(path) = &app.path {
+        if Path::new(path).exists() {
+            return true;
+        }
+    }
+    command_exists(&app.command)
 }
 
 fn collect_start_menu_apps(apps: &mut Vec<InstalledApp>) {
@@ -400,6 +524,259 @@ fn app_from_id(apps: &[InstalledApp], id: &str) -> InstalledApp {
 
 fn ps_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
+}
+
+#[allow(dead_code)]
+fn sh_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn shell_type_or_default(value: Option<&str>) -> &str {
+    match value.unwrap_or("system") {
+        "cmd" | "powershell" | "pwsh" | "bash" | "zsh" | "sh" => value.unwrap(),
+        _ => "system",
+    }
+}
+
+fn shell_command_and_args(shell_type: Option<&str>, command: &str) -> (String, Vec<String>) {
+    match shell_type_or_default(shell_type) {
+        "cmd" => ("cmd".to_string(), vec!["/c".to_string(), command.to_string()]),
+        "powershell" => (
+            "powershell".to_string(),
+            vec![
+                "-NoProfile".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+                "-Command".to_string(),
+                command.to_string(),
+            ],
+        ),
+        "pwsh" => (
+            "pwsh".to_string(),
+            vec!["-NoProfile".to_string(), "-Command".to_string(), command.to_string()],
+        ),
+        "bash" => ("bash".to_string(), vec!["-lc".to_string(), command.to_string()]),
+        "zsh" => ("zsh".to_string(), vec!["-lc".to_string(), command.to_string()]),
+        "sh" => ("sh".to_string(), vec!["-lc".to_string(), command.to_string()]),
+        _ => {
+            if cfg!(windows) {
+                (
+                    "powershell".to_string(),
+                    vec![
+                        "-NoProfile".to_string(),
+                        "-ExecutionPolicy".to_string(),
+                        "Bypass".to_string(),
+                        "-Command".to_string(),
+                        command.to_string(),
+                    ],
+                )
+            } else if let Ok(user_shell) = std::env::var("SHELL") {
+                (user_shell, vec!["-lc".to_string(), command.to_string()])
+            } else {
+                ("sh".to_string(), vec!["-lc".to_string(), command.to_string()])
+            }
+        }
+    }
+}
+
+fn start_new_terminal(shell_type: Option<&str>, cwd: &Path, command: &str) -> Result<(), String> {
+    let cwd_text = cwd.to_string_lossy().to_string();
+
+    #[cfg(windows)]
+    {
+        let shell = shell_type_or_default(shell_type);
+        if shell == "cmd" {
+            Command::new("cmd")
+                .args([
+                    "/c",
+                    "start",
+                    "Command Window",
+                    "cmd",
+                    "/k",
+                    &format!("cd /d \"{}\" && {}", cwd_text.replace('"', "\"\""), command),
+                ])
+                .spawn()
+                .map_err(|error| error.to_string())?;
+        } else {
+            let (shell_command, shell_args) = shell_command_and_args(shell_type, command);
+            let mut args = vec![
+                "/c".to_string(),
+                "start".to_string(),
+                "Terminal".to_string(),
+                shell_command,
+            ];
+            if shell == "powershell" || shell == "system" {
+                args.extend([
+                    "-NoExit".to_string(),
+                    "-NoProfile".to_string(),
+                    "-ExecutionPolicy".to_string(),
+                    "Bypass".to_string(),
+                    "-Command".to_string(),
+                    format!("Set-Location -LiteralPath {}; {}", ps_quote(&cwd_text), command),
+                ]);
+            } else {
+                args.push("/k".to_string());
+                args.push(format!("cd /d \"{}\" && {}", cwd_text.replace('"', "\"\""), command));
+            }
+            if shell_args.is_empty() {
+                return Ok(());
+            }
+            Command::new("cmd")
+                .args(args)
+                .spawn()
+                .map_err(|error| error.to_string())?;
+        }
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let script = format!(
+            "tell application \"Terminal\" to do script \"cd {} ; {}; exec $SHELL -l\"\ntell application \"Terminal\" to activate",
+            cwd_text.replace('\\', "\\\\").replace('"', "\\\""),
+            command.replace('\\', "\\\\").replace('"', "\\\"")
+        );
+        Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let script = format!("cd {} && {}; exec $SHELL -l", sh_quote(&cwd_text), command);
+        let launchers: [(&str, &[&str]); 8] = [
+            ("x-terminal-emulator", &["-e", "sh", "-lc"]),
+            ("gnome-terminal", &["--", "sh", "-lc"]),
+            ("konsole", &["-e", "sh", "-lc"]),
+            ("xfce4-terminal", &["-e", "sh -lc"]),
+            ("kitty", &["sh", "-lc"]),
+            ("alacritty", &["-e", "sh", "-lc"]),
+            ("wezterm", &["start", "--cwd"]),
+            ("xterm", &["-e", "sh", "-lc"]),
+        ];
+
+        for (launcher, prefix) in launchers {
+            if !command_exists(launcher) {
+                continue;
+            }
+            let mut process = Command::new(launcher);
+            match launcher {
+                "wezterm" => {
+                    process.args(prefix).arg(cwd).arg("sh").arg("-lc").arg(&script);
+                }
+                "kitty" => {
+                    process.arg("--directory").arg(cwd).args(prefix).arg(&script);
+                }
+                "alacritty" => {
+                    process.arg("--working-directory").arg(cwd).args(prefix).arg(&script);
+                }
+                "xfce4-terminal" => {
+                    process.arg("--working-directory").arg(cwd).arg("-e").arg(format!("sh -lc {}", sh_quote(&script)));
+                }
+                "gnome-terminal" => {
+                    process.arg(format!("--working-directory={}", cwd.display())).args(prefix).arg(&script);
+                }
+                "konsole" => {
+                    process.arg("--workdir").arg(cwd).args(prefix).arg(&script);
+                }
+                _ => {
+                    process.current_dir(cwd).args(prefix).arg(&script);
+                }
+            }
+            return process.spawn().map(|_| ()).map_err(|error| error.to_string());
+        }
+
+        return Err("No supported terminal application was found on this Linux system.".to_string());
+    }
+
+    #[allow(unreachable_code)]
+    Err("Starting a terminal is not supported on this platform.".to_string())
+}
+
+fn browser_launch_command(browser: &str, url: &str) -> (String, Vec<String>) {
+    #[cfg(windows)]
+    {
+        let command = match browser {
+            "edge" => "msedge",
+            "brave" => "brave",
+            "comet" => "comet",
+            "firefox" => "firefox",
+            _ => "chrome",
+        };
+        return (
+            "cmd".to_string(),
+            vec![
+                "/c".to_string(),
+                "start".to_string(),
+                "".to_string(),
+                command.to_string(),
+                url.to_string(),
+            ],
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let app_name = match browser {
+            "chrome" => Some("Google Chrome"),
+            "edge" => Some("Microsoft Edge"),
+            "brave" => Some("Brave Browser"),
+            "firefox" => Some("Firefox"),
+            "safari" => Some("Safari"),
+            _ => None,
+        };
+        if let Some(app) = app_name {
+            return (
+                "open".to_string(),
+                vec!["-a".to_string(), app.to_string(), url.to_string()],
+            );
+        }
+        return ("open".to_string(), vec![url.to_string()]);
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let candidates = match browser {
+            "chrome" => vec!["google-chrome", "chromium", "chromium-browser"],
+            "edge" => vec!["microsoft-edge", "microsoft-edge-stable"],
+            "brave" => vec!["brave-browser", "brave"],
+            "firefox" => vec!["firefox"],
+            _ => vec![],
+        };
+        if let Some(found) = candidates.into_iter().find(|candidate| command_exists(candidate)) {
+            return (found.to_string(), vec![url.to_string()]);
+        }
+        ("xdg-open".to_string(), vec![url.to_string()])
+    }
+
+    #[allow(unreachable_code)]
+    ("xdg-open".to_string(), vec![url.to_string()])
+}
+
+#[allow(dead_code)]
+fn open_path_with_system(path: &str) -> Result<(), String> {
+    if cfg!(windows) {
+        Command::new("cmd")
+            .args(["/c", "start", "", path])
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    } else if cfg!(target_os = "macos") {
+        Command::new("open")
+            .arg(path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    } else {
+        Command::new("xdg-open")
+            .arg(path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
 }
 
 fn resolve_working_directory(value: &str) -> Result<PathBuf, String> {
@@ -1320,71 +1697,20 @@ fn run_command_node(data: &Value, timeout_seconds: u32) -> Result<String, String
         .and_then(|value| value.as_str())
         .unwrap_or(".");
     let working_directory = resolve_working_directory(working_directory_input)?;
-    let working_directory_text = working_directory.to_string_lossy().to_string();
-    let shell = data
-        .get("shellType")
-        .and_then(|value| value.as_str())
-        .unwrap_or("powershell");
+    let shell = data.get("shellType").and_then(|value| value.as_str());
     let terminal_type = data
         .get("terminalType")
         .and_then(|value| value.as_str())
         .unwrap_or("background");
 
     if terminal_type == "newWindow" {
-        if shell == "cmd" {
-            let cmd_line = format!(
-                "cd /d \"{}\" && {}",
-                working_directory_text.replace('"', "\"\""),
-                command
-            );
-
-            Command::new("cmd")
-                .args([
-                    "/c",
-                    "start",
-                    "Command Window",
-                    "cmd",
-                    "/k",
-                    &cmd_line,
-                ])
-                .spawn()
-                .map_err(|error| error.to_string())?;
-        } else {
-            let ps_script = format!(
-                "Set-Location -LiteralPath {}; {}",
-                ps_quote(&working_directory_text),
-                command
-            );
-
-            Command::new("cmd")
-                .args([
-                    "/c",
-                    "start",
-                    "PowerShell Window",
-                    "powershell",
-                    "-NoExit",
-                    "-NoProfile",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-Command",
-                    &ps_script,
-                ])
-                .spawn()
-                .map_err(|error| error.to_string())?;
-        }
-
+        start_new_terminal(shell, &working_directory, command)?;
         return Ok("Opened command in a new terminal window.".to_string());
     }
 
-    let mut process = if shell == "cmd" {
-        let mut command_process = Command::new("cmd");
-        command_process.args(["/c", command]);
-        command_process
-    } else {
-        let mut command_process = Command::new("powershell");
-        command_process.args(["-NoProfile", "-Command", command]);
-        command_process
-    };
+    let (shell_command, shell_args) = shell_command_and_args(shell, command);
+    let mut process = Command::new(shell_command);
+    process.args(shell_args);
     process.current_dir(&working_directory);
     let output = process.output().map_err(|error| error.to_string())?;
     if output.status.success() {
@@ -1410,7 +1736,12 @@ fn open_app_node(data: &Value) -> Result<String, String> {
         .map(|items| {
             items
                 .iter()
-                .filter_map(|item| item.as_str().map(|arg| arg.replace("{path}", folder_path)))
+                .filter_map(|item| {
+                    item.as_str().map(|arg| {
+                        arg.replace("{path}", folder_path)
+                            .replace("{appPath}", app_path)
+                    })
+                })
                 .filter(|arg| !arg.trim().is_empty())
                 .collect()
         })
@@ -1423,6 +1754,7 @@ fn open_app_node(data: &Value) -> Result<String, String> {
         });
 
     let file = if app_path.trim().is_empty() { command } else { app_path };
+    #[cfg(windows)]
     if file.to_lowercase().ends_with(".lnk") {
         let mut start_args = vec![
             "/c".to_string(),
@@ -1438,19 +1770,52 @@ fn open_app_node(data: &Value) -> Result<String, String> {
         return Ok("Application launch requested.".to_string());
     }
 
-    let script = if args.is_empty() {
-        format!("Start-Process -FilePath {}", ps_quote(file))
-    } else {
-        format!(
-            "Start-Process -FilePath {} -ArgumentList {}",
-            ps_quote(file),
-            ps_array(&args),
-        )
-    };
-    Command::new("powershell")
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
-        .spawn()
-        .map_err(|error| error.to_string())?;
+    #[cfg(windows)]
+    {
+        let script = if args.is_empty() {
+            format!("Start-Process -FilePath {}", ps_quote(file))
+        } else {
+            format!(
+                "Start-Process -FilePath {} -ArgumentList {}",
+                ps_quote(file),
+                ps_array(&args),
+            )
+        };
+        Command::new("powershell")
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if file.ends_with(".app") || command == "open" {
+            let mut process = Command::new("open");
+            if file.ends_with(".app") {
+                process.arg("-a").arg(file);
+            }
+            process.args(&args).spawn().map_err(|error| error.to_string())?;
+        } else if Path::new(file).exists() || command_exists(file) {
+            Command::new(file)
+                .args(&args)
+                .spawn()
+                .map_err(|error| error.to_string())?;
+        } else {
+            open_path_with_system(file)?;
+        }
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if Path::new(file).exists() || command_exists(file) {
+            Command::new(file)
+                .args(&args)
+                .spawn()
+                .map_err(|error| error.to_string())?;
+        } else if !folder_path.trim().is_empty() {
+            open_path_with_system(folder_path)?;
+        } else {
+            open_path_with_system(file)?;
+        }
+    }
     Ok("Application launch requested.".to_string())
 }
 
@@ -1459,16 +1824,10 @@ fn open_browser_node(data: &Value) -> Result<String, String> {
     if url.trim().is_empty() {
         return Err("URL is empty".to_string());
     }
-    let browser = data.get("browser").and_then(|value| value.as_str()).unwrap_or("chrome");
-    let command = match browser {
-        "edge" => "msedge",
-        "brave" => "brave",
-        "comet" => "comet",
-        _ => "chrome",
-    };
-
-    Command::new("cmd")
-        .args(["/c", "start", "", command, url])
+    let browser = data.get("browser").and_then(|value| value.as_str()).unwrap_or("system");
+    let (command, args) = browser_launch_command(browser, url);
+    Command::new(command)
+        .args(args)
         .spawn()
         .map_err(|error| error.to_string())?;
     Ok(format!("Opened {url}"))
@@ -2156,7 +2515,7 @@ pub async fn import_workflows(state: State<'_, AppState>, path: String) -> Resul
 pub fn list_installed_apps() -> Result<Vec<InstalledApp>, String> {
     let mut apps = Vec::new();
     for app in known_app_candidates() {
-        if app.source != "path" || command_exists(&app.command) {
+        if app_candidate_available(&app) {
             apps.push(app);
         }
     }

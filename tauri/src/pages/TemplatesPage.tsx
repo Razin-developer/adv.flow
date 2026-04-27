@@ -2,6 +2,7 @@ import { WandSparkles } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import AppShell from "@/components/AppShell";
 import { TEMPLATES, type Template } from "@/data";
+import { getDefaultOpenApp, getDefaultShell } from "@/lib/plugins";
 import type { Workflow } from "@/types/workflow";
 
 export default function TemplatesPage({
@@ -10,7 +11,7 @@ export default function TemplatesPage({
   onCreateFromTemplate: (payload: Partial<Workflow>) => void;
 }) {
   const childPath = (root: string, child: string) =>
-    `${root.replace(/[\\/]+$/, "")}\\${child}`;
+    `${root.replace(/[\\/]+$/, "")}/${child}`;
 
   function commandNode(
     id: string,
@@ -32,12 +33,13 @@ export default function TemplatesPage({
         command,
         workingDirectory,
         terminalType,
-        shellType: "powershell",
+        shellType: getDefaultShell(),
       },
     };
   }
 
   function openNode(root: string): Workflow["nodes"][number] {
+    const app = getDefaultOpenApp();
     return {
       id: "node_open_root",
       type: "openApp",
@@ -46,12 +48,7 @@ export default function TemplatesPage({
         id: "node_open_root",
         type: "openApp",
         label: "Open project folder",
-        appId: "explorer",
-        appName: "File Explorer",
-        command: "explorer",
-        args: ["{path}"],
-        appPath: "",
-        source: "windows",
+        ...app,
         folderPath: root,
       },
     };
@@ -67,7 +64,7 @@ export default function TemplatesPage({
         type: "openBrowser",
         label: "Open preview",
         url,
-        browser: "chrome",
+        browser: "system",
         waitMode: "delay",
         delay: 1500,
       },

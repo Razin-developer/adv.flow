@@ -11,13 +11,13 @@ export type BlockType =
   | 'typeText'
   | 'pressKey'
   | 'hotkey';
-export type Browser = 'chrome' | 'edge' | 'brave' | 'comet';
+export type Browser = 'system' | 'chrome' | 'edge' | 'brave' | 'firefox' | 'safari' | 'comet';
 export type TerminalMode = 'background' | 'newWindow';
 export type NodeStatus = 'idle' | 'running' | 'success' | 'error' | 'skipped' | 'stopped';
 export type WorkflowKind = 'desktop' | 'inApp';
 
 export interface OpenAppConfig    { type: 'openApp';     appId: string; appName: string; command: string; args: string[]; appPath?: string; source?: string; folderPath: string; label: string; }
-export interface RunCommandConfig { type: 'runCommand';  command: string; workingDirectory: string; terminalType: TerminalMode; shellType?: 'cmd' | 'powershell'; label: string; }
+export interface RunCommandConfig { type: 'runCommand';  command: string; workingDirectory: string; terminalType: TerminalMode; shellType?: string; label: string; }
 export interface OpenBrowserConfig{ type: 'openBrowser'; url: string; browser: Browser; waitMode: 'delay' | 'waitForServer'; delay: number; label: string; }
 export interface DelayConfig      { type: 'delay';       delay: number; waitUrl?: string; label: string; }
 export interface EditorTerminalCommandConfig { type: 'editorTerminalCommand'; command: string; terminalHotkey: string; terminalReadyDelayMs: number; submit: boolean; label: string; }

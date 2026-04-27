@@ -1,9 +1,22 @@
 import { Database } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useState } from "react";
 import AppShell from "@/components/AppShell";
 import { BROWSERS, PLUGINS } from "@/lib/plugins";
+import type { InstalledApp } from "@/types/workflow";
 import type { AppSettings } from "@/types/settings";
 
 export default function IntegrationsPage({ settings }: { settings: AppSettings }) {
+  const [installedApps, setInstalledApps] = useState<InstalledApp[]>([]);
+
+  useEffect(() => {
+    void invoke<InstalledApp[]>("list_installed_apps")
+      .then(setInstalledApps)
+      .catch(() => setInstalledApps([]));
+  }, []);
+
+  const editors = installedApps.filter((app) => ["vscode", "cursor", "antigravity"].includes(app.id));
+
   return (
     <AppShell
       title="Integrations"
@@ -18,10 +31,10 @@ export default function IntegrationsPage({ settings }: { settings: AppSettings }
             </div>
           </div>
           <div className="integration-list">
-            {PLUGINS.map((plugin) => (
+            {(editors.length ? editors : PLUGINS).map((plugin) => (
               <div key={plugin.id} className="integration-item">
-                <div className="integration-chip" style={{ backgroundColor: plugin.color }}>
-                  {plugin.icon}
+                <div className="integration-chip" style={{ backgroundColor: "var(--accent, #2563eb)" }}>
+                  {"icon" in plugin ? plugin.icon : plugin.name.slice(0, 2).toUpperCase()}
                 </div>
                 <div className="integration-copy">
                   <strong>{plugin.name}</strong>
@@ -48,7 +61,7 @@ export default function IntegrationsPage({ settings }: { settings: AppSettings }
                 <div className="integration-chip muted">{browser.icon}</div>
                 <div className="integration-copy">
                   <strong>{browser.name}</strong>
-                  <span>{browser.command[0]} {browser.command[1].join(" ")}</span>
+                  <span>{browser.command}</span>
                 </div>
                 {settings.preferredBrowser === browser.id ? (
                   <span className="meta-badge">Preferred</span>

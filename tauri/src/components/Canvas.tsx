@@ -19,6 +19,7 @@ import BlockSidebar from '@/components/BlockSidebar';
 import NodeConfigPanel from '@/components/NodeConfigPanel';
 import ExecutionPanel from '@/components/ExecutionPanel';
 import BlockNode from '@/components/nodes/BlockNode';
+import { getDefaultOpenApp, getDefaultShell } from '@/lib/plugins';
 import { useBuilderStore } from '@/store/builderStore';
 import type { WorkflowKind } from '@/types/workflow';
 
@@ -36,11 +37,11 @@ interface CanvasProps {
 function defaultNodeData(type: string) {
   switch (type) {
     case 'openApp':
-      return { type, id: '', label: 'Open App', appId: 'explorer', appName: 'File Explorer', command: 'explorer', args: ['{path}'], appPath: '', source: 'windows', folderPath: '' };
+      return { type, id: '', label: 'Open App', ...getDefaultOpenApp(), folderPath: '' };
     case 'runCommand':
-      return { type, id: '', label: 'Run Command', command: '', workingDirectory: '', terminalType: 'background', shellType: 'cmd' };
+      return { type, id: '', label: 'Run Command', command: '', workingDirectory: '', terminalType: 'background', shellType: getDefaultShell() };
     case 'openBrowser':
-      return { type, id: '', label: 'Open Browser', url: 'http://localhost:3000', browser: 'chrome', waitMode: 'delay', delay: 0 };
+      return { type, id: '', label: 'Open Browser', url: 'http://localhost:3000', browser: 'system', waitMode: 'delay', delay: 0 };
     case 'delay':
       return { type, id: '', label: 'Delay', delay: 1000, waitUrl: '' };
     case 'editorTerminalCommand':
