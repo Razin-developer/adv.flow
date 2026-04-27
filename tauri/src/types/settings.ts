@@ -6,7 +6,6 @@ export interface AppSettings {
   autoSaveDelayMs: number;
   commandTimeoutSeconds: number;
   maxParallelNodes: number;
-  macrosEnabled: boolean;
   compactMode: boolean;
   useSystemAppearance: boolean;
   reduceMotion: boolean;

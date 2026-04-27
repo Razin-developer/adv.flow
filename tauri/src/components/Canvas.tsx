@@ -44,22 +44,6 @@ function defaultNodeData(type: string) {
       return { type, id: '', label: 'Open Browser', url: 'http://localhost:3000', browser: 'system', waitMode: 'delay', delay: 0 };
     case 'delay':
       return { type, id: '', label: 'Delay', delay: 1000, waitUrl: '' };
-    case 'editorTerminalCommand':
-      return { type, id: '', label: 'Run in integrated terminal', command: '', terminalHotkey: 'ctrl+shift+`', terminalReadyDelayMs: 1000, submit: true };
-    case 'moveMouse':
-      return { type, id: '', label: 'Move cursor', x: 640, y: 360 };
-    case 'mouseClick':
-      return { type, id: '', label: 'Mouse click', button: 'left' };
-    case 'mouseDoubleClick':
-      return { type, id: '', label: 'Double click', button: 'left' };
-    case 'mouseScroll':
-      return { type, id: '', label: 'Scroll', amount: -1 };
-    case 'typeText':
-      return { type, id: '', label: 'Type text', text: '' };
-    case 'pressKey':
-      return { type, id: '', label: 'Press key', key: 'enter' };
-    case 'hotkey':
-      return { type, id: '', label: 'Send hotkey', keys: ['ctrl', 'shift', 'p'] };
     default:
       return { type, id: '', label: 'Block' };
   }
@@ -199,7 +183,7 @@ function InnerCanvas({ workflowId, initialNodes, initialEdges, onChange, onBefor
             updateNode(selectedNodeId, updater);
           }}
         />
-        <ExecutionPanel workflowId={workflowId} onBeforeRun={onBeforeRun} workflowKind={workflowKind} />
+        <ExecutionPanel workflowId={workflowId} onBeforeRun={onBeforeRun} />
       </div>
     </div>
   );

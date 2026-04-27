@@ -1,5 +1,4 @@
 import {
-  AppWindow,
   Gauge,
   LayoutDashboard,
   Network,
@@ -25,7 +24,6 @@ export type Template = {
 
 export const NAV_ITEMS: NavItem[] = [
   { to: "/workflows", label: "Workflows", icon: LayoutDashboard },
-  { to: "/in-app", label: "In-App", icon: AppWindow },
   { to: "/templates", label: "Templates", icon: WandSparkles },
   { to: "/runs", label: "Runs", icon: Gauge },
   { to: "/integrations", label: "Integrations", icon: Network },

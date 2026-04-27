@@ -4,7 +4,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { DialogProvider, useAppDialog } from "@/components/AppDialog";
 import BuilderWrapper from "@/BuilderWrapper";
 import IntegrationsPage from "@/pages/IntegrationsPage";
-import InAppWorkflowsPage from "@/pages/InAppWorkflowsPage";
 import RunsPage from "@/pages/RunsPage";
 import SettingsPage from "@/pages/SettingsPage";
 import TemplatesPage from "@/pages/TemplatesPage";
@@ -21,7 +20,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   autoSaveDelayMs: 900,
   commandTimeoutSeconds: 120,
   maxParallelNodes: 4,
-  macrosEnabled: true,
   compactMode: true,
   useSystemAppearance: true,
   reduceMotion: false,
@@ -78,7 +76,6 @@ function AppRouter() {
   useEffect(() => {
     void loadWorkflows();
     void loadSettings();
-    void invoke("ensure_in_app_listener").catch(() => undefined);
   }, []);
 
   async function handleCreateWorkflow(payload?: Partial<Workflow>) {
@@ -86,9 +83,7 @@ function AppRouter() {
       payload: {
         name: payload?.name || "New Workflow",
         description: payload?.description || "",
-        kind: payload?.kind || "desktop",
-        baseAppId: payload?.baseAppId || "",
-        entryHotkey: payload?.entryHotkey || "",
+        kind: "desktop",
         tags: payload?.tags || [],
         favorite: payload?.favorite || false,
         nodes: payload?.nodes || [],
@@ -140,9 +135,6 @@ function AppRouter() {
     document.documentElement.dataset.compact = String(saved.compactMode);
     document.documentElement.dataset.reduceMotion = String(saved.reduceMotion);
     document.documentElement.dataset.systemAppearance = String(saved.useSystemAppearance);
-    if (saved.macrosEnabled) {
-      void invoke("ensure_in_app_listener").catch(() => undefined);
-    }
     await loadWorkflows();
   }
 
@@ -167,20 +159,6 @@ function AppRouter() {
               onToggleFavorite={(id: string) => void handleToggleFavorite(id)}
               onImportComplete={loadWorkflows}
               onRunWorkflow={handleRunWorkflow}
-            />
-          }
-        />
-        <Route
-          path="/in-app"
-          element={
-            <InAppWorkflowsPage
-              workflows={workflows}
-              loading={loadingWorkflows}
-              onCreateWorkflow={(payload) => void handleCreateWorkflow(payload)}
-              onOpenWorkflow={(id: string) => navigate(`/builder/${id}?from=in-app`)}
-              onDuplicateWorkflow={(id: string) => void handleDuplicateWorkflow(id)}
-              onDeleteWorkflow={(id: string) => void handleDeleteWorkflow(id)}
-              onToggleFavorite={(id: string) => void handleToggleFavorite(id)}
             />
           }
         />

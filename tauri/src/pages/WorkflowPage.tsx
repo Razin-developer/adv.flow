@@ -136,7 +136,7 @@ export default function WorkflowsPage({
   const dialog = useAppDialog();
   // const [aiPrompt, setAiPrompt] = useState("");
   // const [aiDirectory, setAiDirectory] = useState("");
-  const desktopWorkflows = workflows.filter((workflow) => workflow.kind !== "inApp");
+  const desktopWorkflows = workflows;
   const [_, setInstalledApps] = useState<InstalledApp[]>([]);
   const [__, setSelectedAppId] = useState("explorer");
   // const [aiBusy, setAiBusy] = useState(false);

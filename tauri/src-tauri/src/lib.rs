@@ -1,5 +1,4 @@
 use tauri::Manager;
-mod macro_engine;
 mod workflows;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -44,21 +43,7 @@ pub fn run() {
             workflows::generate_workflow_from_prompt,
             workflows::generate_workflow_from_folder,
             workflows::suggest_node_update,
-            workflows::list_local_models,
-            workflows::ensure_in_app_listener,
-            macro_engine::is_running_as_admin,
-            macro_engine::restart_as_admin,
-            macro_engine::move_mouse,
-            macro_engine::mouse_click,
-            macro_engine::mouse_double_click,
-            macro_engine::mouse_scroll,
-            macro_engine::type_text,
-            macro_engine::press_key,
-            macro_engine::hotkey,
-            macro_engine::wait_ms,
-            macro_engine::open_app,
-            macro_engine::run_command,
-            macro_engine::replay_macro
+            workflows::list_local_models
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

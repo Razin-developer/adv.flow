@@ -2,46 +2,22 @@ export type BlockType =
   | 'openApp'
   | 'runCommand'
   | 'openBrowser'
-  | 'delay'
-  | 'editorTerminalCommand'
-  | 'moveMouse'
-  | 'mouseClick'
-  | 'mouseDoubleClick'
-  | 'mouseScroll'
-  | 'typeText'
-  | 'pressKey'
-  | 'hotkey';
+  | 'delay';
 export type Browser = 'system' | 'chrome' | 'edge' | 'brave' | 'firefox' | 'safari' | 'comet';
 export type TerminalMode = 'background' | 'newWindow';
 export type NodeStatus = 'idle' | 'running' | 'success' | 'error' | 'skipped' | 'stopped';
-export type WorkflowKind = 'desktop' | 'inApp';
+export type WorkflowKind = 'desktop';
 
 export interface OpenAppConfig    { type: 'openApp';     appId: string; appName: string; command: string; args: string[]; appPath?: string; source?: string; folderPath: string; label: string; }
 export interface RunCommandConfig { type: 'runCommand';  command: string; workingDirectory: string; terminalType: TerminalMode; shellType?: string; label: string; }
 export interface OpenBrowserConfig{ type: 'openBrowser'; url: string; browser: Browser; waitMode: 'delay' | 'waitForServer'; delay: number; label: string; }
 export interface DelayConfig      { type: 'delay';       delay: number; waitUrl?: string; label: string; }
-export interface EditorTerminalCommandConfig { type: 'editorTerminalCommand'; command: string; terminalHotkey: string; terminalReadyDelayMs: number; submit: boolean; label: string; }
-export interface MoveMouseConfig { type: 'moveMouse'; x: number; y: number; label: string; }
-export interface MouseClickConfig { type: 'mouseClick'; button: 'left' | 'right' | 'middle'; label: string; }
-export interface MouseDoubleClickConfig { type: 'mouseDoubleClick'; button: 'left' | 'right' | 'middle'; label: string; }
-export interface MouseScrollConfig { type: 'mouseScroll'; amount: number; label: string; }
-export interface TypeTextConfig { type: 'typeText'; text: string; label: string; }
-export interface PressKeyConfig { type: 'pressKey'; key: string; label: string; }
-export interface HotkeyConfig { type: 'hotkey'; keys: string[]; label: string; }
 
 export type BlockConfig =
   | OpenAppConfig
   | RunCommandConfig
   | OpenBrowserConfig
-  | DelayConfig
-  | EditorTerminalCommandConfig
-  | MoveMouseConfig
-  | MouseClickConfig
-  | MouseDoubleClickConfig
-  | MouseScrollConfig
-  | TypeTextConfig
-  | PressKeyConfig
-  | HotkeyConfig;
+  | DelayConfig;
 
 export interface InstalledApp {
   id: string;
@@ -67,8 +43,6 @@ export interface Workflow {
   _id?: string; id?: string;
   name: string; description: string;
   kind?: WorkflowKind;
-  baseAppId?: string;
-  entryHotkey?: string;
   tags: string[]; favorite: boolean;
   nodes: WorkflowNode[]; edges: WorkflowEdge[];
   createdAt: string; updatedAt: string;

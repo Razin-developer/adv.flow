@@ -9,26 +9,13 @@ const DESKTOP_BLOCKS = [
   { type: 'delay', name: 'Delay', description: 'Pause or wait for a URL to respond.' },
 ] as const;
 
-const IN_APP_BLOCKS = [
-  ...DESKTOP_BLOCKS,
-  { type: 'editorTerminalCommand', name: 'Editor Terminal', description: 'Open the integrated terminal and send a command in VS Code, Cursor, or Antigravity.' },
-  { type: 'moveMouse', name: 'Move Cursor', description: 'Move the mouse to an absolute screen position.' },
-  { type: 'mouseClick', name: 'Mouse Click', description: 'Click the left, right, or middle mouse button.' },
-  { type: 'mouseDoubleClick', name: 'Double Click', description: 'Double click a mouse button.' },
-  { type: 'mouseScroll', name: 'Mouse Scroll', description: 'Scroll vertically by the configured amount.' },
-  { type: 'typeText', name: 'Type Text', description: 'Type raw text into the focused app.' },
-  { type: 'pressKey', name: 'Press Key', description: 'Press one key in the focused app.' },
-  { type: 'hotkey', name: 'Hotkey', description: 'Send a modifier key combination to the focused app.' },
-] as const;
-
 export default function BlockSidebar({
   onAddBlock,
-  workflowKind,
 }: {
   onAddBlock?: (type: string) => void;
   workflowKind: WorkflowKind;
 }) {
-  const blocks = workflowKind === "inApp" ? IN_APP_BLOCKS : DESKTOP_BLOCKS;
+  const blocks = DESKTOP_BLOCKS;
 
   return (
     <aside className="block-sidebar">

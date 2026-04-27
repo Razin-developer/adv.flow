@@ -13,27 +13,11 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, State};
 use uuid::Uuid;
-#[cfg(windows)]
-use windows::Win32::{
-    Foundation::{CloseHandle, HWND},
-    System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION},
-    UI::{
-        Input::KeyboardAndMouse::{
-            GetAsyncKeyState, VK_CONTROL, VK_F1, VK_F10, VK_F11, VK_F12, VK_F2, VK_F3, VK_F4,
-            VK_F5, VK_F6, VK_F7, VK_F8, VK_F9, VK_LWIN, VK_MENU, VK_RETURN, VK_SHIFT,
-            VK_SPACE, VK_TAB,
-        },
-        WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId},
-    },
-};
-
-
-use crate::macro_engine;
 
 static WORKFLOW_RUN_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static NODE_RUN_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -46,8 +30,6 @@ pub struct Workflow {
     pub description: String,
     pub favorite: bool,
     pub kind: String,
-    pub base_app_id: String,
-    pub entry_hotkey: String,
     pub nodes: Vec<Value>,
     pub edges: Vec<Value>,
     pub tags: Vec<String>,
@@ -64,8 +46,6 @@ impl Default for Workflow {
             description: String::new(),
             favorite: false,
             kind: "desktop".to_string(),
-            base_app_id: String::new(),
-            entry_hotkey: String::new(),
             nodes: Vec::new(),
             edges: Vec::new(),
             tags: Vec::new(),
@@ -85,7 +65,6 @@ pub struct AppSettings {
     pub auto_save_delay_ms: u32,
     pub command_timeout_seconds: u32,
     pub max_parallel_nodes: u32,
-    pub macros_enabled: bool,
     pub compact_mode: bool,
     pub use_system_appearance: bool,
     pub reduce_motion: bool,
@@ -115,7 +94,6 @@ impl Default for AppSettings {
             auto_save_delay_ms: 900,
             command_timeout_seconds: 120,
             max_parallel_nodes: 4,
-            macros_enabled: true,
             compact_mode: true,
             use_system_appearance: true,
             reduce_motion: false,
@@ -143,7 +121,6 @@ pub struct AppState {
     pub backend_log_path: PathBuf,
     pub workflows: Mutex<Vec<Workflow>>,
     pub settings: Mutex<AppSettings>,
-    pub in_app_listener_started: AtomicBool,
     pub active_workflow_runs: Mutex<HashSet<String>>,
     pub log_write_lock: Mutex<()>,
 }
@@ -224,11 +201,7 @@ fn normalize_workflow(workflow: &mut Workflow) {
     if workflow.kind.trim().is_empty() {
         workflow.kind = "desktop".to_string();
     }
-    if workflow.kind != "inApp" {
-        workflow.kind = "desktop".to_string();
-        workflow.base_app_id.clear();
-        workflow.entry_hotkey.clear();
-    }
+    workflow.kind = "desktop".to_string();
     for (index, node) in workflow.nodes.iter_mut().enumerate() {
         normalize_node(node, index);
     }
@@ -976,14 +949,6 @@ fn normalize_node(node: &mut Value, index: usize) {
                     | "runCommand"
                     | "openBrowser"
                     | "delay"
-                    | "editorTerminalCommand"
-                    | "moveMouse"
-                    | "mouseClick"
-                    | "mouseDoubleClick"
-                    | "mouseScroll"
-                    | "typeText"
-                    | "pressKey"
-                    | "hotkey"
             )
         })
         .unwrap_or("runCommand")
@@ -1379,7 +1344,6 @@ openApp: appId, appName, command, args, appPath, source, folderPath, label.
 runCommand: command, workingDirectory, terminalType ("background" or "newWindow"), shellType ("powershell" or "cmd"), label.
 openBrowser: url, browser ("chrome", "edge", "brave", "comet"), waitMode ("delay" or "waitForServer"), delay, label.
 delay: delay, waitUrl, label.
-editorTerminalCommand: command, terminalHotkey, submit, label.
 
 Rules:
 - Always include an openApp node first using the supplied app fields.
@@ -1629,8 +1593,6 @@ fn build_workflow_from_scan(
         }),
         favorite: false,
         kind: "desktop".to_string(),
-        base_app_id: String::new(),
-        entry_hotkey: String::new(),
         nodes,
         edges,
         tags: vec![
@@ -2025,108 +1987,6 @@ fn open_browser_node(data: &Value) -> Result<String, String> {
     Ok(format!("Opened {url}"))
 }
 
-fn editor_terminal_command_node(data: &Value) -> Result<String, String> {
-    let command = data.get("command").and_then(|value| value.as_str()).unwrap_or("").trim();
-    if command.is_empty() {
-        return Err("Terminal command is empty".to_string());
-    }
-
-    let hotkey = data
-        .get("terminalHotkey")
-        .and_then(|value| value.as_str())
-        .unwrap_or("ctrl+shift+`");
-    let terminal_ready_delay_ms = data
-        .get("terminalReadyDelayMs")
-        .and_then(|value| value.as_u64())
-        .unwrap_or(1000)
-        .max(1000);
-    let submit = data.get("submit").and_then(|value| value.as_bool()).unwrap_or(true);
-
-    let hotkey_parts = hotkey
-        .split('+')
-        .map(|part| part.trim().to_string())
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>();
-
-    macro_engine::hotkey_impl(hotkey_parts)?;
-    macro_engine::wait_ms(terminal_ready_delay_ms)?;
-    macro_engine::type_text_impl(command.to_string())?;
-    if submit {
-        macro_engine::press_key_impl("enter".to_string())?;
-    }
-
-    Ok(format!("Sent integrated terminal command: {command}"))
-}
-
-fn move_mouse_node(data: &Value) -> Result<String, String> {
-    let x = data.get("x").and_then(|value| value.as_i64()).unwrap_or(0) as i32;
-    let y = data.get("y").and_then(|value| value.as_i64()).unwrap_or(0) as i32;
-    macro_engine::move_mouse_impl(x, y)?;
-    Ok(format!("Moved cursor to {x}, {y}"))
-}
-
-fn mouse_click_node(data: &Value) -> Result<String, String> {
-    let button = data.get("button").and_then(|value| value.as_str()).unwrap_or("left").to_string();
-    macro_engine::mouse_click_impl(button.clone())?;
-    Ok(format!("Clicked {button} mouse button"))
-}
-
-fn mouse_double_click_node(data: &Value) -> Result<String, String> {
-    let button = data.get("button").and_then(|value| value.as_str()).unwrap_or("left").to_string();
-    macro_engine::mouse_double_click_impl(button.clone())?;
-    Ok(format!("Double clicked {button} mouse button"))
-}
-
-fn mouse_scroll_node(data: &Value) -> Result<String, String> {
-    let amount = data.get("amount").and_then(|value| value.as_i64()).unwrap_or(-1) as i32;
-    macro_engine::mouse_scroll_impl(amount)?;
-    Ok(format!("Scrolled by {amount}"))
-}
-
-fn type_text_node(data: &Value) -> Result<String, String> {
-    let text = data.get("text").and_then(|value| value.as_str()).unwrap_or("").to_string();
-    if text.is_empty() {
-        return Err("Text is empty".to_string());
-    }
-    macro_engine::type_text_impl(text.clone())?;
-    Ok(format!("Typed {} characters", text.chars().count()))
-}
-
-fn press_key_node(data: &Value) -> Result<String, String> {
-    let key = data.get("key").and_then(|value| value.as_str()).unwrap_or("").to_string();
-    if key.trim().is_empty() {
-        return Err("Key is empty".to_string());
-    }
-    macro_engine::press_key_impl(key.clone())?;
-    Ok(format!("Pressed key {key}"))
-}
-
-fn hotkey_node(data: &Value) -> Result<String, String> {
-    let keys = data
-        .get("keys")
-        .and_then(|value| value.as_array())
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.as_str().map(|value| value.to_string()))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    if keys.is_empty() {
-        return Err("Hotkey needs at least one key".to_string());
-    }
-    macro_engine::hotkey_impl(keys.clone())?;
-    Ok(format!("Sent hotkey {}", keys.join("+")))
-}
-
-fn ensure_macros_enabled(settings: &AppSettings) -> Result<(), String> {
-    if settings.macros_enabled {
-        Ok(())
-    } else {
-        Err("Macros are disabled in Settings.".to_string())
-    }
-}
-
 #[instrument(skip(settings))]
 fn execute_node(node: &Value, settings: &AppSettings) -> Result<String, String> {
     let data = node.get("data").unwrap_or(node);
@@ -2134,35 +1994,6 @@ fn execute_node(node: &Value, settings: &AppSettings) -> Result<String, String> 
         "openApp" => open_app_node(data),
         "runCommand" => run_command_node(data, settings.command_timeout_seconds),
         "openBrowser" => open_browser_node(data),
-        "editorTerminalCommand" => editor_terminal_command_node(data),
-        "moveMouse" => {
-            ensure_macros_enabled(settings)?;
-            move_mouse_node(data)
-        }
-        "mouseClick" => {
-            ensure_macros_enabled(settings)?;
-            mouse_click_node(data)
-        }
-        "mouseDoubleClick" => {
-            ensure_macros_enabled(settings)?;
-            mouse_double_click_node(data)
-        }
-        "mouseScroll" => {
-            ensure_macros_enabled(settings)?;
-            mouse_scroll_node(data)
-        }
-        "typeText" => {
-            ensure_macros_enabled(settings)?;
-            type_text_node(data)
-        }
-        "pressKey" => {
-            ensure_macros_enabled(settings)?;
-            press_key_node(data)
-        }
-        "hotkey" => {
-            ensure_macros_enabled(settings)?;
-            hotkey_node(data)
-        }
         "delay" => {
             let delay = data.get("delay").and_then(|value| value.as_u64()).unwrap_or(1000);
             std::thread::sleep(std::time::Duration::from_millis(delay.min(60_000)));
@@ -2258,235 +2089,6 @@ async fn call_local_model_json(
     Ok(extract_json_text(content))
 }
 
-#[cfg(windows)]
-fn parse_hotkey_keys(hotkey: &str) -> Vec<String> {
-    hotkey
-        .split('+')
-        .map(|part| part.trim().to_ascii_lowercase())
-        .filter(|part| !part.is_empty())
-        .collect()
-}
-
-#[cfg(windows)]
-fn modifier_vk(key: &str) -> Option<i32> {
-    match key {
-        "ctrl" | "control" => Some(VK_CONTROL.0 as i32),
-        "shift" => Some(VK_SHIFT.0 as i32),
-        "alt" => Some(VK_MENU.0 as i32),
-        "win" | "meta" | "super" => Some(VK_LWIN.0 as i32),
-        _ => None,
-    }
-}
-
-#[cfg(windows)]
-fn primary_vk(key: &str) -> Option<i32> {
-    match key {
-        "enter" | "return" => Some(VK_RETURN.0 as i32),
-        "tab" => Some(VK_TAB.0 as i32),
-        "space" => Some(VK_SPACE.0 as i32),
-        "`" | "backquote" | "grave" => Some(0xC0),
-        "f1" => Some(VK_F1.0 as i32),
-        "f2" => Some(VK_F2.0 as i32),
-        "f3" => Some(VK_F3.0 as i32),
-        "f4" => Some(VK_F4.0 as i32),
-        "f5" => Some(VK_F5.0 as i32),
-        "f6" => Some(VK_F6.0 as i32),
-        "f7" => Some(VK_F7.0 as i32),
-        "f8" => Some(VK_F8.0 as i32),
-        "f9" => Some(VK_F9.0 as i32),
-        "f10" => Some(VK_F10.0 as i32),
-        "f11" => Some(VK_F11.0 as i32),
-        "f12" => Some(VK_F12.0 as i32),
-        _ if key.len() == 1 => key.chars().next().map(|ch| ch.to_ascii_uppercase() as i32),
-        _ => None,
-    }
-}
-
-#[cfg(windows)]
-fn is_vk_pressed(vk: i32) -> bool {
-    unsafe { GetAsyncKeyState(vk) < 0 }
-}
-
-#[cfg(windows)]
-fn hotkey_is_pressed(hotkey: &str) -> bool {
-    let parts = parse_hotkey_keys(hotkey);
-    if parts.is_empty() {
-        return false;
-    }
-
-    let mut main_key = None;
-    for part in &parts {
-        if let Some(vk) = modifier_vk(part) {
-            if !is_vk_pressed(vk) {
-                return false;
-            }
-        } else if let Some(vk) = primary_vk(part) {
-            main_key = Some(vk);
-        } else {
-            return false;
-        }
-    }
-
-    main_key.is_some_and(is_vk_pressed)
-}
-
-#[cfg(not(windows))]
-fn is_vk_pressed(key_name: &str) -> bool {
-    use device_query::{DeviceQuery, DeviceState, Keycode};
-    let device_state = DeviceState::new();
-    let keys = device_state.get_keys();
-    
-    let target = match key_name.to_lowercase().as_str() {
-        "ctrl" | "control" => Keycode::LControl,
-        "alt" | "menu" => Keycode::LAlt,
-        "shift" => Keycode::LShift,
-        "win" | "command" | "meta" => Keycode::LMeta,
-        "enter" | "return" => Keycode::Enter,
-        "space" => Keycode::Space,
-        "tab" => Keycode::Tab,
-        "f1" => Keycode::F1,
-        "f2" => Keycode::F2,
-        "f3" => Keycode::F3,
-        "f4" => Keycode::F4,
-        "f5" => Keycode::F5,
-        "f6" => Keycode::F6,
-        "f7" => Keycode::F7,
-        "f8" => Keycode::F8,
-        "f9" => Keycode::F9,
-        "f10" => Keycode::F10,
-        "f11" => Keycode::F11,
-        "f12" => Keycode::F12,
-        other if other.len() == 1 => {
-            let ch = other.chars().next().unwrap().to_ascii_uppercase();
-            match ch {
-                'A' => Keycode::A, 'B' => Keycode::B, 'C' => Keycode::C, 'D' => Keycode::D,
-                'E' => Keycode::E, 'F' => Keycode::F, 'G' => Keycode::G, 'H' => Keycode::H,
-                'I' => Keycode::I, 'J' => Keycode::J, 'K' => Keycode::K, 'L' => Keycode::L,
-                'M' => Keycode::M, 'N' => Keycode::N, 'O' => Keycode::O, 'P' => Keycode::P,
-                'Q' => Keycode::Q, 'R' => Keycode::R, 'S' => Keycode::S, 'T' => Keycode::T,
-                'U' => Keycode::U, 'V' => Keycode::V, 'W' => Keycode::W, 'X' => Keycode::X,
-                'Y' => Keycode::Y, 'Z' => Keycode::Z,
-                '0' => Keycode::Key0, '1' => Keycode::Key1, '2' => Keycode::Key2, '3' => Keycode::Key3,
-                '4' => Keycode::Key4, '5' => Keycode::Key5, '6' => Keycode::Key6, '7' => Keycode::Key7,
-                '8' => Keycode::Key8, '9' => Keycode::Key9,
-                _ => return false,
-            }
-        }
-        _ => return false,
-    };
-    
-    keys.contains(&target)
-}
-
-#[cfg(not(windows))]
-fn hotkey_is_pressed(hotkey: &str) -> bool {
-    let parts: Vec<&str> = hotkey.split('+').map(|s| s.trim()).collect();
-    if parts.is_empty() {
-        return false;
-    }
-
-    for part in parts {
-        if !is_vk_pressed(part) {
-            return false;
-        }
-    }
-    true
-}
-
-
-
-#[cfg(windows)]
-fn foreground_process_name() -> Option<String> {
-    let hwnd: HWND = unsafe { GetForegroundWindow() };
-    if hwnd.0.is_null() {
-        return None;
-    }
-
-    let mut process_id = 0u32;
-    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut process_id)) };
-    if process_id == 0 {
-        return None;
-    }
-
-    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id).ok()? };
-    let mut buffer = vec![0u16; 260];
-    let mut size = buffer.len() as u32;
-    let result = unsafe {
-        QueryFullProcessImageNameW(
-            handle,
-            windows::Win32::System::Threading::PROCESS_NAME_FORMAT(0),
-            windows::core::PWSTR(buffer.as_mut_ptr()),
-            &mut size,
-        )
-    };
-    let _ = unsafe { CloseHandle(handle) };
-    if result.is_err() {
-        return None;
-    }
-
-    let path = String::from_utf16_lossy(&buffer[..size as usize]);
-    Path::new(&path)
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .map(|value| value.to_ascii_lowercase())
-}
-
-#[cfg(not(windows))]
-fn foreground_process_name() -> Option<String> {
-    if cfg!(target_os = "macos") {
-        let output = Command::new("osascript")
-            .args(["-e", "tell application \"System Events\" to get name of first process whose frontmost is true"])
-            .output()
-            .ok()?;
-        
-        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if name.is_empty() { None } else { Some(name.to_lowercase()) }
-    } else if cfg!(target_os = "linux") {
-        // Try xprop (X11)
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg("xprop -id $(xprop -root _NET_ACTIVE_WINDOW | cut -d ' ' -f 5) WM_CLASS | cut -d '\"' -f 4")
-            .output()
-            .ok()?;
-            
-        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if name.is_empty() { None } else { Some(name.to_lowercase()) }
-    } else {
-        None
-    }
-}
-
-
-
-fn app_match_tokens(app: &InstalledApp) -> Vec<String> {
-    let mut tokens = vec![app.id.to_ascii_lowercase(), app.name.to_ascii_lowercase(), app.command.to_ascii_lowercase()];
-    if let Some(path) = &app.path {
-        if let Some(stem) = Path::new(path).file_stem().and_then(|value| value.to_str()) {
-            tokens.push(stem.to_ascii_lowercase());
-        }
-    }
-    match app.id.as_str() {
-        "vscode" => tokens.extend(["code".to_string(), "visual studio code".to_string()]),
-        "cursor" => tokens.push("cursor".to_string()),
-        "antigravity" => tokens.push("antigravity".to_string()),
-        _ => {}
-    }
-    tokens
-}
-
-fn app_matches_process(app_id: &str, process_name: &str, apps: &[InstalledApp]) -> bool {
-    let process_name = process_name.to_ascii_lowercase();
-    let Some(app) = apps.iter().find(|app| app.id == app_id) else {
-        return process_name.contains(&app_id.to_ascii_lowercase());
-    };
-
-    app_match_tokens(app)
-        .into_iter()
-        .map(|token| token.replace(".app", "").replace('_', " ").replace('-', " "))
-        .filter(|token| !token.trim().is_empty())
-        .any(|token| process_name.contains(token.trim()))
-}
-
 #[instrument(skip(workflow, settings))]
 fn execute_workflow_nodes(workflow: &Workflow, settings: &AppSettings) -> Result<(), String> {
     info!(
@@ -2504,142 +2106,6 @@ fn execute_workflow_nodes(workflow: &Workflow, settings: &AppSettings) -> Result
         "Workflow nodes finished"
     );
     Ok(())
-}
-
-fn current_workflows_for_listener(app_handle: &AppHandle, settings: &AppSettings) -> Result<Vec<Workflow>, String> {
-    if settings.storage_mode == "mongodb" {
-        tauri::async_runtime::block_on(get_remote_workflows(settings))
-    } else {
-        Ok(app_handle.state::<AppState>().workflows.lock().unwrap().clone())
-    }
-}
-
-#[instrument(skip(app))]
-fn start_in_app_listener(app: AppHandle) {
-    if app
-        .state::<AppState>()
-        .in_app_listener_started
-        .swap(true, Ordering::SeqCst)
-    {
-        app.state::<AppState>()
-            .log_backend_event("listener", "ensure_in_app_listener called again; listener already running");
-        return;
-    }
-    app.state::<AppState>()
-        .log_backend_event("listener", "Starting in-app listener thread");
-
-    std::thread::spawn(move || {
-        let mut fired = HashSet::<String>::new();
-        let mut apps = list_installed_apps().unwrap_or_default();
-        let mut apps_loaded_at = Instant::now();
-
-        loop {
-            let state = app.state::<AppState>();
-            let settings = state.settings.lock().unwrap().clone();
-            if !settings.macros_enabled {
-                state.log_backend_event(
-                    "listener",
-                    "Stopping in-app listener because macros are disabled in Settings.",
-                );
-                state
-                    .in_app_listener_started
-                    .store(false, Ordering::SeqCst);
-                break;
-            }
-
-            let workflows = match current_workflows_for_listener(&app, &settings) {
-                Ok(w) => w,
-                Err(e) => {
-                    state.log_backend_event("listener", format!("Failed to load workflows: {e}"));
-                    std::thread::sleep(std::time::Duration::from_millis(1000));
-                    continue;
-                }
-            };
-            if apps_loaded_at.elapsed() >= Duration::from_secs(300) {
-                apps = list_installed_apps().unwrap_or_default();
-                apps_loaded_at = Instant::now();
-            }
-
-            let foreground = foreground_process_name().unwrap_or_default();
-            let active_ids = workflows
-                .iter()
-                .filter(|workflow| workflow.kind == "inApp")
-                .filter(|workflow| !workflow.entry_hotkey.trim().is_empty())
-                .filter(|workflow| !workflow.base_app_id.trim().is_empty())
-                .filter(|workflow| app_matches_process(&workflow.base_app_id, &foreground, &apps))
-                .filter(|workflow| hotkey_is_pressed(&workflow.entry_hotkey))
-                .map(|workflow| workflow.id.clone())
-                .collect::<HashSet<_>>();
-
-            for workflow in workflows.iter().filter(|w| active_ids.contains(&w.id)) {
-                if fired.contains(&workflow.id) {
-                    continue;
-                }
-
-                if !state.try_start_workflow_run(&workflow.id) {
-                    state.log_backend_event(
-                        "listener",
-                        format!(
-                            "Skipped duplicate in-app trigger for workflow '{}' ({}) because it is already running",
-                            workflow.name, workflow.id
-                        ),
-                    );
-                    continue;
-                }
-
-                fired.insert(workflow.id.clone());
-
-                let workflow_inner = workflow.clone();
-                let settings_inner = settings.clone();
-                let app_inner = app.clone();
-                let run_id = WORKFLOW_RUN_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-                state.log_backend_event(
-                    "listener",
-                    format!(
-                        "Accepted in-app trigger run #{run_id} for workflow '{}' ({})",
-                        workflow_inner.name, workflow_inner.id
-                    ),
-                );
-
-                std::thread::spawn(move || {
-                    let state = app_inner.state::<AppState>();
-                    let started_at = Instant::now();
-                    state.log_backend_event(
-                        "workflow",
-                        format!(
-                            "Run #{run_id} started from in-app listener for workflow '{}' ({})",
-                            workflow_inner.name, workflow_inner.id
-                        ),
-                    );
-                    match execute_workflow_nodes(&workflow_inner, &settings_inner) {
-                        Ok(()) => state.log_backend_event(
-                            "workflow",
-                            format!(
-                                "Run #{run_id} finished successfully in {}ms for workflow '{}' ({})",
-                                started_at.elapsed().as_millis(),
-                                workflow_inner.name,
-                                workflow_inner.id
-                            ),
-                        ),
-                        Err(error) => state.log_backend_event(
-                            "workflow",
-                            format!(
-                                "Run #{run_id} failed after {}ms for workflow '{}' ({}): {}",
-                                started_at.elapsed().as_millis(),
-                                workflow_inner.name,
-                                workflow_inner.id,
-                                error
-                            ),
-                        ),
-                    }
-                    state.finish_workflow_run(&workflow_inner.id);
-                });
-            }
-
-            fired.retain(|id| active_ids.contains(id));
-            std::thread::sleep(std::time::Duration::from_millis(700));
-        }
-    });
 }
 
 async fn workflow_collection(settings: &AppSettings) -> Result<Collection<Workflow>, String> {
@@ -2979,21 +2445,7 @@ pub async fn create_workflow(state: State<'_, AppState>, payload: Value) -> Resu
             .get("favorite")
             .and_then(|value| value.as_bool())
             .unwrap_or(false),
-        kind: payload
-            .get("kind")
-            .and_then(|value| value.as_str())
-            .unwrap_or("desktop")
-            .to_string(),
-        base_app_id: payload
-            .get("baseAppId")
-            .and_then(|value| value.as_str())
-            .unwrap_or("")
-            .to_string(),
-        entry_hotkey: payload
-            .get("entryHotkey")
-            .and_then(|value| value.as_str())
-            .unwrap_or("")
-            .to_string(),
+        kind: "desktop".to_string(),
         nodes: payload
             .get("nodes")
             .and_then(|value| value.as_array())
@@ -3200,13 +2652,11 @@ fn apply_workflow_payload(workflow: &mut Workflow, payload: &Value) {
         workflow.favorite = favorite;
     }
     if let Some(kind) = payload.get("kind").and_then(|value| value.as_str()) {
-        workflow.kind = kind.to_string();
-    }
-    if let Some(base_app_id) = payload.get("baseAppId").and_then(|value| value.as_str()) {
-        workflow.base_app_id = base_app_id.to_string();
-    }
-    if let Some(entry_hotkey) = payload.get("entryHotkey").and_then(|value| value.as_str()) {
-        workflow.entry_hotkey = entry_hotkey.to_string();
+        workflow.kind = if kind == "desktop" {
+            "desktop".to_string()
+        } else {
+            "desktop".to_string()
+        };
     }
     if let Some(nodes) = payload.get("nodes").and_then(|value| value.as_array()) {
         workflow.nodes = nodes.clone();
@@ -3277,15 +2727,6 @@ pub async fn list_local_models(
     models.sort();
     models.dedup();
     Ok(models)
-}
-
-#[tauri::command]
-pub fn ensure_in_app_listener(app: AppHandle) -> Result<bool, String> {
-    start_in_app_listener(app.clone());
-    Ok(app
-        .state::<AppState>()
-        .in_app_listener_started
-        .load(Ordering::SeqCst))
 }
 
 #[tauri::command]
@@ -3388,7 +2829,6 @@ pub fn init_state(app_handle: &AppHandle) -> AppState {
         backend_log_path,
         workflows: Mutex::new(workflows),
         settings: Mutex::new(settings),
-        in_app_listener_started: AtomicBool::new(false),
         active_workflow_runs: Mutex::new(HashSet::new()),
         log_write_lock: Mutex::new(()),
     }
