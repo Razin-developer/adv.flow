@@ -131,10 +131,25 @@ fn shell_command_and_args(shell_type: &str, command: &str) -> (String, Vec<Strin
                 command.to_string(),
             ],
         ),
-        "pwsh" => (
-            "pwsh".to_string(),
-            vec!["-NoProfile".to_string(), "-Command".to_string(), command.to_string()],
-        ),
+        "pwsh" => {
+            if command_exists("pwsh") {
+                (
+                    "pwsh".to_string(),
+                    vec!["-NoProfile".to_string(), "-Command".to_string(), command.to_string()],
+                )
+            } else {
+                (
+                    "powershell".to_string(),
+                    vec![
+                        "-NoProfile".to_string(),
+                        "-ExecutionPolicy".to_string(),
+                        "Bypass".to_string(),
+                        "-Command".to_string(),
+                        command.to_string(),
+                    ],
+                )
+            }
+        },
         "bash" => ("bash".to_string(), vec!["-lc".to_string(), command.to_string()]),
         "zsh" => ("zsh".to_string(), vec!["-lc".to_string(), command.to_string()]),
         "sh" => ("sh".to_string(), vec!["-lc".to_string(), command.to_string()]),
@@ -163,34 +178,28 @@ fn start_new_terminal(shell_type: &str, cwd: &Path, command: &str) -> Result<(),
     let cwd_text = cwd.to_string_lossy();
     
     if cfg!(windows) {
-        if shell_type == "cmd" {
-            Command::new("cmd")
-                .args([
-                    "/c",
-                    "start",
-                    "",
-                    "cmd",
-                    "/k",
-                    &format!("cd /d \"{}\" && {}", cwd_text, command),
-                ])
-                .spawn()
-                .map_err(|error| error.to_string())?;
-            return Ok(());
+        let (shell_command, _shell_args) = shell_command_and_args(shell_type, command);
+        let mut args = vec![
+            "/c".to_string(),
+            "start".to_string(),
+            "".to_string(),
+            shell_command.clone(),
+        ];
+        if shell_command == "powershell" || shell_command == "pwsh" {
+            args.extend([
+                "-NoExit".to_string(),
+                "-NoProfile".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+                "-Command".to_string(),
+                format!("Set-Location -LiteralPath {}; {}", ps_quote(&cwd_text), command),
+            ]);
+        } else {
+            args.push("/k".to_string());
+            args.push(format!("cd /d \"{}\" && {}", cwd_text.replace('"', "\"\""), command));
         }
-
         Command::new("cmd")
-            .args([
-                "/c",
-                "start",
-                "",
-                "powershell",
-                "-NoExit",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                &format!("Set-Location -LiteralPath {}; {}", ps_quote(&cwd_text), command),
-            ])
+            .args(args)
             .spawn()
             .map_err(|error| error.to_string())?;
     } else if cfg!(target_os = "macos") {

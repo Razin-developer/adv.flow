@@ -470,6 +470,12 @@ fn collect_start_menu_apps(apps: &mut Vec<InstalledApp>) {
     if let Ok(app_data) = std::env::var("AppData") {
         roots.push(PathBuf::from(app_data).join("Microsoft\\Windows\\Start Menu\\Programs"));
     }
+    if let Ok(public) = std::env::var("PUBLIC") {
+        roots.push(PathBuf::from(public).join("Desktop"));
+    }
+    if let Ok(user_profile) = std::env::var("USERPROFILE") {
+        roots.push(PathBuf::from(user_profile).join("Desktop"));
+    }
 
     for root in roots {
         collect_shortcuts(&root, apps);
@@ -508,9 +514,74 @@ fn collect_shortcuts(dir: &Path, apps: &mut Vec<InstalledApp>) {
             path: Some(shortcut),
             source: "start-menu".to_string(),
         });
+    }
+}
 
-        if apps.len() > 160 {
-            return;
+fn collect_mac_apps(apps: &mut Vec<InstalledApp>) {
+    let mut roots = vec![
+        PathBuf::from("/Applications"),
+        PathBuf::from("/System/Applications"),
+        PathBuf::from("/System/Applications/Utilities"),
+    ];
+    if let Ok(home) = std::env::var("HOME") {
+        roots.push(PathBuf::from(home).join("Applications"));
+    }
+
+    for root in roots {
+        let Ok(entries) = fs::read_dir(root) else { continue; };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("app") { continue; }
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue; };
+            let id = format!("mac-{}", slug(stem));
+            if apps.iter().any(|app| app.id == id) { continue; }
+            apps.push(InstalledApp {
+                id,
+                name: stem.to_string(),
+                command: "open".to_string(),
+                args: vec!["-a".to_string(), "{appPath}".to_string(), "{path}".to_string()],
+                path: Some(path.to_string_lossy().to_string()),
+                source: "macos".to_string(),
+            });
+        }
+    }
+}
+
+fn collect_linux_apps(apps: &mut Vec<InstalledApp>) {
+    let mut roots = vec![PathBuf::from("/usr/share/applications")];
+    if let Ok(home) = std::env::var("HOME") {
+        roots.push(PathBuf::from(home).join(".local/share/applications"));
+    }
+    for root in roots {
+        let Ok(entries) = fs::read_dir(root) else { continue; };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("desktop") { continue; }
+            if let Ok(content) = fs::read_to_string(&path) {
+                let mut name = String::new();
+                let mut exec = String::new();
+                for line in content.lines() {
+                    let line = line.trim();
+                    if line.starts_with("Name=") && name.is_empty() {
+                        name = line[5..].to_string();
+                    } else if line.starts_with("Exec=") && exec.is_empty() {
+                        let full_exec = line[5..].to_string();
+                        exec = full_exec.split_whitespace().next().unwrap_or("").to_string();
+                    }
+                }
+                if !name.is_empty() && !exec.is_empty() {
+                    let id = format!("linux-{}", slug(&name));
+                    if apps.iter().any(|app| app.id == id) { continue; }
+                    apps.push(InstalledApp {
+                        id,
+                        name,
+                        command: exec,
+                        args: vec!["{path}".to_string()],
+                        path: Some(path.to_string_lossy().to_string()),
+                        source: "linux".to_string(),
+                    });
+                }
+            }
         }
     }
 }
@@ -551,10 +622,25 @@ fn shell_command_and_args(shell_type: Option<&str>, command: &str) -> (String, V
                 command.to_string(),
             ],
         ),
-        "pwsh" => (
-            "pwsh".to_string(),
-            vec!["-NoProfile".to_string(), "-Command".to_string(), command.to_string()],
-        ),
+        "pwsh" => {
+            if command_exists("pwsh") {
+                (
+                    "pwsh".to_string(),
+                    vec!["-NoProfile".to_string(), "-Command".to_string(), command.to_string()],
+                )
+            } else {
+                (
+                    "powershell".to_string(),
+                    vec![
+                        "-NoProfile".to_string(),
+                        "-ExecutionPolicy".to_string(),
+                        "Bypass".to_string(),
+                        "-Command".to_string(),
+                        command.to_string(),
+                    ],
+                )
+            }
+        },
         "bash" => ("bash".to_string(), vec!["-lc".to_string(), command.to_string()]),
         "zsh" => ("zsh".to_string(), vec!["-lc".to_string(), command.to_string()]),
         "sh" => ("sh".to_string(), vec!["-lc".to_string(), command.to_string()]),
@@ -602,10 +688,10 @@ fn start_new_terminal(shell_type: Option<&str>, cwd: &Path, command: &str) -> Re
             let mut args = vec![
                 "/c".to_string(),
                 "start".to_string(),
-                "Terminal".to_string(),
-                shell_command,
+                "".to_string(),
+                shell_command.clone(),
             ];
-            if shell == "powershell" || shell == "system" {
+            if shell_command == "powershell" || shell_command == "pwsh" {
                 args.extend([
                     "-NoExit".to_string(),
                     "-NoProfile".to_string(),
@@ -2520,6 +2606,8 @@ pub fn list_installed_apps() -> Result<Vec<InstalledApp>, String> {
         }
     }
     collect_start_menu_apps(&mut apps);
+    collect_mac_apps(&mut apps);
+    collect_linux_apps(&mut apps);
     apps.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
     apps.dedup_by(|left, right| left.name.eq_ignore_ascii_case(&right.name));
     Ok(apps)
