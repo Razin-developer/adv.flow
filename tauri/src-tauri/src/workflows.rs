@@ -665,7 +665,7 @@ fn shell_command_and_args(shell_type: Option<&str>, command: &str) -> (String, V
     }
 }
 
-fn start_new_terminal(shell_type: Option<&str>, cwd: &Path, command: &str) -> Result<(), String> {
+fn start_new_terminal(#[allow(unused_variables)] shell_type: Option<&str>, cwd: &Path, command: &str) -> Result<(), String> {
     let cwd_text = cwd.to_string_lossy().to_string();
 
     #[cfg(windows)]
@@ -835,7 +835,7 @@ fn browser_launch_command(browser: &str, url: &str) -> (String, Vec<String>) {
         if let Some(found) = candidates.into_iter().find(|candidate| command_exists(candidate)) {
             return (found.to_string(), vec![url.to_string()]);
         }
-        ("xdg-open".to_string(), vec![url.to_string()])
+        return ("xdg-open".to_string(), vec![url.to_string()]);
     }
 
     #[allow(unreachable_code)]
