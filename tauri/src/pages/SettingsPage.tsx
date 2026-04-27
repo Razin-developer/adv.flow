@@ -224,6 +224,17 @@ export default function SettingsPage({
           <div className="toggle-grid">
             <label className="toggle-card">
               <div>
+                <strong>Enable macros</strong>
+                <span>Allow mouse, keyboard, and other desktop macro actions to run.</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={draft.macrosEnabled}
+                onChange={(event) => setField("macrosEnabled", event.target.checked)}
+              />
+            </label>
+            <label className="toggle-card">
+              <div>
                 <strong>Developer mode</strong>
                 <span>Expose more detail in logs and future tooling panels.</span>
               </div>

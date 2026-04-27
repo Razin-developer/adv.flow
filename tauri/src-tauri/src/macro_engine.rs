@@ -1,6 +1,7 @@
 use enigo::{
     Axis, Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings,
 };
+use tracing::{error, info, instrument};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -8,7 +9,7 @@ use std::{
     thread,
     time::Duration,
 };
-use tauri::AppHandle;
+use tauri::{AppHandle, State};
 #[cfg(windows)]
 use windows::{
     core::PCWSTR,
@@ -20,7 +21,7 @@ use windows::{
         },
     },
 };
-
+use crate::workflows::AppState;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -46,6 +47,14 @@ pub enum MacroAction {
 
 fn create_enigo() -> Result<Enigo, String> {
     Enigo::new(&Settings::default()).map_err(|error| error.to_string())
+}
+
+fn ensure_macros_enabled(state: &State<'_, AppState>) -> Result<(), String> {
+    if state.settings.lock().unwrap().macros_enabled {
+        Ok(())
+    } else {
+        Err("Macros are disabled in Settings.".to_string())
+    }
 }
 
 fn parse_button(button: &str) -> Result<Button, String> {
@@ -171,6 +180,15 @@ fn run_shell_command(
     admin: bool,
 ) -> Result<String, String> {
     let working_directory = optional_working_directory(working_directory)?;
+    info!(
+        command,
+        admin,
+        cwd = working_directory
+            .as_ref()
+            .map(|dir| dir.display().to_string())
+            .unwrap_or_else(|| ".".to_string()),
+        "Starting macro shell command"
+    );
 
     if admin {
         #[cfg(windows)]
@@ -204,35 +222,39 @@ fn run_shell_command(
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
 
     if output.status.success() {
+        info!(status = %output.status, "Macro shell command completed");
         if stdout.is_empty() {
             Ok("Command completed successfully.".into())
         } else {
             Ok(stdout)
         }
     } else if stderr.is_empty() {
+        error!(status = %output.status, "Macro shell command failed without stderr");
         Err(format!("Command failed with status {}", output.status))
     } else {
+        error!(status = %output.status, stderr, "Macro shell command failed");
         Err(stderr)
     }
 }
 
 
+#[instrument]
 fn execute_action(action: MacroAction) -> Result<(), String> {
     match action {
-        MacroAction::MoveMouse { x, y } => move_mouse(x, y),
-        MacroAction::MouseClick { button } => mouse_click(button),
-        MacroAction::MouseDoubleClick { button } => mouse_double_click(button),
-        MacroAction::MouseScroll { amount } => mouse_scroll(amount),
-        MacroAction::TypeText { text } => type_text(text),
-        MacroAction::PressKey { key } => press_key(key),
-        MacroAction::Hotkey { keys } => hotkey(keys),
+        MacroAction::MoveMouse { x, y } => move_mouse_impl(x, y),
+        MacroAction::MouseClick { button } => mouse_click_impl(button),
+        MacroAction::MouseDoubleClick { button } => mouse_double_click_impl(button),
+        MacroAction::MouseScroll { amount } => mouse_scroll_impl(amount),
+        MacroAction::TypeText { text } => type_text_impl(text),
+        MacroAction::PressKey { key } => press_key_impl(key),
+        MacroAction::Hotkey { keys } => hotkey_impl(keys),
         MacroAction::WaitMs { ms } => wait_ms(ms),
-        MacroAction::OpenApp { path, args } => open_app(path, args).map(|_| ()),
+        MacroAction::OpenApp { path, args } => open_app_impl(path, args).map(|_| ()),
         MacroAction::RunCommand {
             command,
             working_directory,
             admin,
-        } => run_command(command, working_directory, admin).map(|_| ()),
+        } => run_shell_command(&command, working_directory, admin.unwrap_or(false)).map(|_| ()),
     }
 }
 
@@ -271,8 +293,8 @@ pub fn restart_as_admin(app: AppHandle) -> Result<String, String> {
 }
 
 
-#[tauri::command]
-pub fn move_mouse(x: i32, y: i32) -> Result<(), String> {
+pub fn move_mouse_impl(x: i32, y: i32) -> Result<(), String> {
+    info!(x, y, "Macro move_mouse");
     let mut enigo = create_enigo()?;
     enigo
         .move_mouse(x, y, Coordinate::Abs)
@@ -280,7 +302,13 @@ pub fn move_mouse(x: i32, y: i32) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn mouse_click(button: String) -> Result<(), String> {
+pub fn move_mouse(state: State<'_, AppState>, x: i32, y: i32) -> Result<(), String> {
+    ensure_macros_enabled(&state)?;
+    move_mouse_impl(x, y)
+}
+
+pub fn mouse_click_impl(button: String) -> Result<(), String> {
+    info!(button, "Macro mouse_click");
     let mut enigo = create_enigo()?;
     let button = parse_button(&button)?;
     enigo
@@ -289,7 +317,13 @@ pub fn mouse_click(button: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn mouse_double_click(button: String) -> Result<(), String> {
+pub fn mouse_click(state: State<'_, AppState>, button: String) -> Result<(), String> {
+    ensure_macros_enabled(&state)?;
+    mouse_click_impl(button)
+}
+
+pub fn mouse_double_click_impl(button: String) -> Result<(), String> {
+    info!(button, "Macro mouse_double_click");
     let mut enigo = create_enigo()?;
     let button = parse_button(&button)?;
     enigo
@@ -302,7 +336,13 @@ pub fn mouse_double_click(button: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn mouse_scroll(amount: i32) -> Result<(), String> {
+pub fn mouse_double_click(state: State<'_, AppState>, button: String) -> Result<(), String> {
+    ensure_macros_enabled(&state)?;
+    mouse_double_click_impl(button)
+}
+
+pub fn mouse_scroll_impl(amount: i32) -> Result<(), String> {
+    info!(amount, "Macro mouse_scroll");
     let mut enigo = create_enigo()?;
     enigo
         .scroll(amount, Axis::Vertical)
@@ -310,13 +350,25 @@ pub fn mouse_scroll(amount: i32) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn type_text(text: String) -> Result<(), String> {
+pub fn mouse_scroll(state: State<'_, AppState>, amount: i32) -> Result<(), String> {
+    ensure_macros_enabled(&state)?;
+    mouse_scroll_impl(amount)
+}
+
+pub fn type_text_impl(text: String) -> Result<(), String> {
+    info!(text_len = text.len(), "Macro type_text");
     let mut enigo = create_enigo()?;
     enigo.text(&text).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub fn press_key(key: String) -> Result<(), String> {
+pub fn type_text(state: State<'_, AppState>, text: String) -> Result<(), String> {
+    ensure_macros_enabled(&state)?;
+    type_text_impl(text)
+}
+
+pub fn press_key_impl(key: String) -> Result<(), String> {
+    info!(key, "Macro press_key");
     let mut enigo = create_enigo()?;
     let parsed = parse_key(&key)?;
     enigo
@@ -325,7 +377,13 @@ pub fn press_key(key: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn hotkey(keys: Vec<String>) -> Result<(), String> {
+pub fn press_key(state: State<'_, AppState>, key: String) -> Result<(), String> {
+    ensure_macros_enabled(&state)?;
+    press_key_impl(key)
+}
+
+pub fn hotkey_impl(keys: Vec<String>) -> Result<(), String> {
+    info!(keys = ?keys, "Macro hotkey");
     if keys.is_empty() {
         return Err("Hotkey requires at least one key.".into());
     }
@@ -362,18 +420,26 @@ pub fn hotkey(keys: Vec<String>) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn hotkey(state: State<'_, AppState>, keys: Vec<String>) -> Result<(), String> {
+    ensure_macros_enabled(&state)?;
+    hotkey_impl(keys)
+}
+
+#[tauri::command]
 pub fn wait_ms(ms: u64) -> Result<(), String> {
+    info!(ms, "Macro wait_ms");
     thread::sleep(Duration::from_millis(ms));
     Ok(())
 }
 
-#[tauri::command]
-pub fn open_app(path: String, args: Option<Vec<String>>) -> Result<String, String> {
+pub fn open_app_impl(path: String, args: Option<Vec<String>>) -> Result<String, String> {
     let args = args.unwrap_or_default();
     let executable = Path::new(&path);
     if !executable.exists() {
         return Err(format!("App path does not exist: {}", executable.display()));
     }
+
+    info!(path, args = ?args, "Starting macro open_app");
 
     Command::new(executable)
         .args(&args)
@@ -384,20 +450,39 @@ pub fn open_app(path: String, args: Option<Vec<String>>) -> Result<String, Strin
 }
 
 #[tauri::command]
-pub fn run_command(
+pub fn open_app(state: State<'_, AppState>, path: String, args: Option<Vec<String>>) -> Result<String, String> {
+    ensure_macros_enabled(&state)?;
+    open_app_impl(path, args)
+}
+
+#[tauri::command]
+pub async fn run_command(
+    state: State<'_, AppState>,
     command: String,
     working_directory: Option<String>,
     admin: Option<bool>,
 ) -> Result<String, String> {
-    run_shell_command(&command, working_directory, admin.unwrap_or(false))
+    ensure_macros_enabled(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        run_shell_command(&command, working_directory, admin.unwrap_or(false))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn replay_macro(actions: Vec<MacroAction>) -> Result<String, String> {
-    let total = actions.len();
-    for action in actions {
-        execute_action(action)?;
-    }
+pub async fn replay_macro(state: State<'_, AppState>, actions: Vec<MacroAction>) -> Result<String, String> {
+    ensure_macros_enabled(&state)?;
+    info!(action_count = actions.len(), "Starting macro replay");
+    tauri::async_runtime::spawn_blocking(move || {
+        let total = actions.len();
+        for action in actions {
+            execute_action(action)?;
+        }
 
-    Ok(format!("Replayed {total} macro actions."))
+        info!(total, "Finished macro replay");
+        Ok(format!("Replayed {total} macro actions."))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }

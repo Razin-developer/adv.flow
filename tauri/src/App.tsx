@@ -21,6 +21,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   autoSaveDelayMs: 900,
   commandTimeoutSeconds: 120,
   maxParallelNodes: 4,
+  macrosEnabled: true,
   compactMode: true,
   useSystemAppearance: true,
   reduceMotion: false,
@@ -139,6 +140,9 @@ function AppRouter() {
     document.documentElement.dataset.compact = String(saved.compactMode);
     document.documentElement.dataset.reduceMotion = String(saved.reduceMotion);
     document.documentElement.dataset.systemAppearance = String(saved.useSystemAppearance);
+    if (saved.macrosEnabled) {
+      void invoke("ensure_in_app_listener").catch(() => undefined);
+    }
     await loadWorkflows();
   }
 

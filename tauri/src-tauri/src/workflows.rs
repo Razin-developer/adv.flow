@@ -1,4 +1,5 @@
 use chrono::Utc;
+use tracing::{error, info, instrument, warn};
 use futures_util::TryStreamExt;
 use mongodb::{
     bson::doc,
@@ -9,10 +10,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, State};
 use uuid::Uuid;
 #[cfg(windows)]
@@ -31,6 +34,9 @@ use windows::Win32::{
 
 
 use crate::macro_engine;
+
+static WORKFLOW_RUN_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static NODE_RUN_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase", default)]
@@ -79,6 +85,7 @@ pub struct AppSettings {
     pub auto_save_delay_ms: u32,
     pub command_timeout_seconds: u32,
     pub max_parallel_nodes: u32,
+    pub macros_enabled: bool,
     pub compact_mode: bool,
     pub use_system_appearance: bool,
     pub reduce_motion: bool,
@@ -108,6 +115,7 @@ impl Default for AppSettings {
             auto_save_delay_ms: 900,
             command_timeout_seconds: 120,
             max_parallel_nodes: 4,
+            macros_enabled: true,
             compact_mode: true,
             use_system_appearance: true,
             reduce_motion: false,
@@ -132,9 +140,12 @@ impl Default for AppSettings {
 pub struct AppState {
     pub workflows_path: PathBuf,
     pub settings_path: PathBuf,
+    pub backend_log_path: PathBuf,
     pub workflows: Mutex<Vec<Workflow>>,
     pub settings: Mutex<AppSettings>,
     pub in_app_listener_started: AtomicBool,
+    pub active_workflow_runs: Mutex<HashSet<String>>,
+    pub log_write_lock: Mutex<()>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -162,10 +173,42 @@ impl AppState {
         fs::write(&self.settings_path, json).map_err(|error| error.to_string())?;
         Ok(())
     }
+
+    fn log_backend_event(&self, scope: &str, message: impl AsRef<str>) {
+        log_backend_event(&self.backend_log_path, &self.log_write_lock, scope, message.as_ref());
+    }
+
+    fn try_start_workflow_run(&self, workflow_id: &str) -> bool {
+        let mut active = self.active_workflow_runs.lock().unwrap();
+        if active.contains(workflow_id) {
+            return false;
+        }
+        active.insert(workflow_id.to_string());
+        true
+    }
+
+    fn finish_workflow_run(&self, workflow_id: &str) {
+        self.active_workflow_runs.lock().unwrap().remove(workflow_id);
+    }
 }
 
 fn timestamp() -> String {
     Utc::now().to_rfc3339()
+}
+
+fn log_backend_event(log_path: &Path, write_lock: &Mutex<()>, scope: &str, message: &str) {
+    let line = format!("{} [{}] {}\n", timestamp(), scope, message);
+    let _guard = write_lock.lock().unwrap();
+    if let Some(parent) = log_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+    {
+        let _ = file.write_all(line.as_bytes());
+    }
 }
 
 fn normalize_workflow(workflow: &mut Workflow) {
@@ -478,11 +521,15 @@ fn collect_start_menu_apps(apps: &mut Vec<InstalledApp>) {
     }
 
     for root in roots {
-        collect_shortcuts(&root, apps);
+        collect_shortcuts(&root, apps, 0);
     }
 }
 
-fn collect_shortcuts(dir: &Path, apps: &mut Vec<InstalledApp>) {
+#[instrument(skip(apps))]
+fn collect_shortcuts(dir: &Path, apps: &mut Vec<InstalledApp>, depth: u32) {
+    if depth > 5 {
+        return;
+    }
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -490,7 +537,7 @@ fn collect_shortcuts(dir: &Path, apps: &mut Vec<InstalledApp>) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_shortcuts(&path, apps);
+            collect_shortcuts(&path, apps, depth + 1);
             continue;
         }
 
@@ -1773,6 +1820,7 @@ async fn update_node_with_ai(
 }
 
 fn run_command_node(data: &Value, timeout_seconds: u32) -> Result<String, String> {
+    let node_run_id = NODE_RUN_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let command = data.get("command").and_then(|value| value.as_str()).unwrap_or("");
     if command.trim().is_empty() {
         return Err("Command is empty".to_string());
@@ -1789,26 +1837,72 @@ fn run_command_node(data: &Value, timeout_seconds: u32) -> Result<String, String
         .and_then(|value| value.as_str())
         .unwrap_or("background");
 
+    info!(
+        node_run_id,
+        terminal_type,
+        shell = shell.unwrap_or("default"),
+        cwd = %working_directory.display(),
+        command,
+        "Starting runCommand node"
+    );
+
     if terminal_type == "newWindow" {
         start_new_terminal(shell, &working_directory, command)?;
+        info!(node_run_id, "runCommand opened a new terminal window");
         return Ok("Opened command in a new terminal window.".to_string());
     }
 
     let (shell_command, shell_args) = shell_command_and_args(shell, command);
-    let mut process = Command::new(shell_command);
-    process.args(shell_args);
-    process.current_dir(&working_directory);
-    let output = process.output().map_err(|error| error.to_string())?;
+    let mut child = Command::new(shell_command)
+        .args(shell_args)
+        .current_dir(&working_directory)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+
+    let timeout = Duration::from_secs(u64::from(timeout_seconds.max(1)));
+    let started_at = Instant::now();
+    loop {
+        if child.try_wait().map_err(|error| error.to_string())?.is_some() {
+            break;
+        }
+
+        if started_at.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            warn!(node_run_id, timeout_seconds, command, "runCommand node timed out");
+            return Err(format!("Command timed out after {timeout_seconds}s."));
+        }
+
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    let output = child.wait_with_output().map_err(|error| error.to_string())?;
     if output.status.success() {
+        info!(
+            node_run_id,
+            elapsed_ms = started_at.elapsed().as_millis(),
+            status = %output.status,
+            "runCommand node completed"
+        );
         Ok(format!(
             "Command completed within configured timeout target of {timeout_seconds}s."
         ))
     } else {
+        error!(
+            node_run_id,
+            elapsed_ms = started_at.elapsed().as_millis(),
+            status = %output.status,
+            stderr = %String::from_utf8_lossy(&output.stderr).trim(),
+            "runCommand node failed"
+        );
         Err(String::from_utf8_lossy(&output.stderr).to_string())
     }
 }
 
 fn open_app_node(data: &Value) -> Result<String, String> {
+    let node_run_id = NODE_RUN_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let command = data.get("command").and_then(|value| value.as_str()).unwrap_or("");
     let app_path = data.get("appPath").and_then(|value| value.as_str()).unwrap_or("");
     if command.trim().is_empty() && app_path.trim().is_empty() {
@@ -1840,6 +1934,14 @@ fn open_app_node(data: &Value) -> Result<String, String> {
         });
 
     let file = if app_path.trim().is_empty() { command } else { app_path };
+    info!(
+        node_run_id,
+        command,
+        app_path,
+        file,
+        args = ?args,
+        "Starting openApp node"
+    );
     #[cfg(windows)]
     if file.to_lowercase().ends_with(".lnk") {
         let mut start_args = vec![
@@ -1853,6 +1955,7 @@ fn open_app_node(data: &Value) -> Result<String, String> {
             .args(start_args)
             .spawn()
             .map_err(|error| error.to_string())?;
+        info!(node_run_id, file, "openApp node launched Windows shortcut");
         return Ok("Application launch requested.".to_string());
     }
 
@@ -1871,6 +1974,7 @@ fn open_app_node(data: &Value) -> Result<String, String> {
             .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
             .spawn()
             .map_err(|error| error.to_string())?;
+        info!(node_run_id, file, "openApp node launched on Windows");
     }
     #[cfg(target_os = "macos")]
     {
@@ -1888,6 +1992,7 @@ fn open_app_node(data: &Value) -> Result<String, String> {
         } else {
             open_path_with_system(file)?;
         }
+        info!(node_run_id, file, "openApp node launched on macOS");
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -1901,6 +2006,7 @@ fn open_app_node(data: &Value) -> Result<String, String> {
         } else {
             open_path_with_system(file)?;
         }
+        info!(node_run_id, file, "openApp node launched on Linux");
     }
     Ok("Application launch requested.".to_string())
 }
@@ -1942,11 +2048,11 @@ fn editor_terminal_command_node(data: &Value) -> Result<String, String> {
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>();
 
-    macro_engine::hotkey(hotkey_parts)?;
+    macro_engine::hotkey_impl(hotkey_parts)?;
     macro_engine::wait_ms(terminal_ready_delay_ms)?;
-    macro_engine::type_text(command.to_string())?;
+    macro_engine::type_text_impl(command.to_string())?;
     if submit {
-        macro_engine::press_key("enter".to_string())?;
+        macro_engine::press_key_impl("enter".to_string())?;
     }
 
     Ok(format!("Sent integrated terminal command: {command}"))
@@ -1955,25 +2061,25 @@ fn editor_terminal_command_node(data: &Value) -> Result<String, String> {
 fn move_mouse_node(data: &Value) -> Result<String, String> {
     let x = data.get("x").and_then(|value| value.as_i64()).unwrap_or(0) as i32;
     let y = data.get("y").and_then(|value| value.as_i64()).unwrap_or(0) as i32;
-    macro_engine::move_mouse(x, y)?;
+    macro_engine::move_mouse_impl(x, y)?;
     Ok(format!("Moved cursor to {x}, {y}"))
 }
 
 fn mouse_click_node(data: &Value) -> Result<String, String> {
     let button = data.get("button").and_then(|value| value.as_str()).unwrap_or("left").to_string();
-    macro_engine::mouse_click(button.clone())?;
+    macro_engine::mouse_click_impl(button.clone())?;
     Ok(format!("Clicked {button} mouse button"))
 }
 
 fn mouse_double_click_node(data: &Value) -> Result<String, String> {
     let button = data.get("button").and_then(|value| value.as_str()).unwrap_or("left").to_string();
-    macro_engine::mouse_double_click(button.clone())?;
+    macro_engine::mouse_double_click_impl(button.clone())?;
     Ok(format!("Double clicked {button} mouse button"))
 }
 
 fn mouse_scroll_node(data: &Value) -> Result<String, String> {
     let amount = data.get("amount").and_then(|value| value.as_i64()).unwrap_or(-1) as i32;
-    macro_engine::mouse_scroll(amount)?;
+    macro_engine::mouse_scroll_impl(amount)?;
     Ok(format!("Scrolled by {amount}"))
 }
 
@@ -1982,7 +2088,7 @@ fn type_text_node(data: &Value) -> Result<String, String> {
     if text.is_empty() {
         return Err("Text is empty".to_string());
     }
-    macro_engine::type_text(text.clone())?;
+    macro_engine::type_text_impl(text.clone())?;
     Ok(format!("Typed {} characters", text.chars().count()))
 }
 
@@ -1991,7 +2097,7 @@ fn press_key_node(data: &Value) -> Result<String, String> {
     if key.trim().is_empty() {
         return Err("Key is empty".to_string());
     }
-    macro_engine::press_key(key.clone())?;
+    macro_engine::press_key_impl(key.clone())?;
     Ok(format!("Pressed key {key}"))
 }
 
@@ -2009,10 +2115,19 @@ fn hotkey_node(data: &Value) -> Result<String, String> {
     if keys.is_empty() {
         return Err("Hotkey needs at least one key".to_string());
     }
-    macro_engine::hotkey(keys.clone())?;
+    macro_engine::hotkey_impl(keys.clone())?;
     Ok(format!("Sent hotkey {}", keys.join("+")))
 }
 
+fn ensure_macros_enabled(settings: &AppSettings) -> Result<(), String> {
+    if settings.macros_enabled {
+        Ok(())
+    } else {
+        Err("Macros are disabled in Settings.".to_string())
+    }
+}
+
+#[instrument(skip(settings))]
 fn execute_node(node: &Value, settings: &AppSettings) -> Result<String, String> {
     let data = node.get("data").unwrap_or(node);
     match data.get("type").and_then(|value| value.as_str()).unwrap_or("") {
@@ -2020,13 +2135,34 @@ fn execute_node(node: &Value, settings: &AppSettings) -> Result<String, String> 
         "runCommand" => run_command_node(data, settings.command_timeout_seconds),
         "openBrowser" => open_browser_node(data),
         "editorTerminalCommand" => editor_terminal_command_node(data),
-        "moveMouse" => move_mouse_node(data),
-        "mouseClick" => mouse_click_node(data),
-        "mouseDoubleClick" => mouse_double_click_node(data),
-        "mouseScroll" => mouse_scroll_node(data),
-        "typeText" => type_text_node(data),
-        "pressKey" => press_key_node(data),
-        "hotkey" => hotkey_node(data),
+        "moveMouse" => {
+            ensure_macros_enabled(settings)?;
+            move_mouse_node(data)
+        }
+        "mouseClick" => {
+            ensure_macros_enabled(settings)?;
+            mouse_click_node(data)
+        }
+        "mouseDoubleClick" => {
+            ensure_macros_enabled(settings)?;
+            mouse_double_click_node(data)
+        }
+        "mouseScroll" => {
+            ensure_macros_enabled(settings)?;
+            mouse_scroll_node(data)
+        }
+        "typeText" => {
+            ensure_macros_enabled(settings)?;
+            type_text_node(data)
+        }
+        "pressKey" => {
+            ensure_macros_enabled(settings)?;
+            press_key_node(data)
+        }
+        "hotkey" => {
+            ensure_macros_enabled(settings)?;
+            hotkey_node(data)
+        }
         "delay" => {
             let delay = data.get("delay").and_then(|value| value.as_u64()).unwrap_or(1000);
             std::thread::sleep(std::time::Duration::from_millis(delay.min(60_000)));
@@ -2351,10 +2487,22 @@ fn app_matches_process(app_id: &str, process_name: &str, apps: &[InstalledApp]) 
         .any(|token| process_name.contains(token.trim()))
 }
 
+#[instrument(skip(workflow, settings))]
 fn execute_workflow_nodes(workflow: &Workflow, settings: &AppSettings) -> Result<(), String> {
+    info!(
+        workflow_id = workflow.id,
+        workflow_name = workflow.name,
+        node_count = workflow.nodes.len(),
+        "Executing workflow nodes"
+    );
     for node in &workflow.nodes {
         execute_node(node, settings)?;
     }
+    info!(
+        workflow_id = workflow.id,
+        workflow_name = workflow.name,
+        "Workflow nodes finished"
+    );
     Ok(())
 }
 
@@ -2366,26 +2514,51 @@ fn current_workflows_for_listener(app_handle: &AppHandle, settings: &AppSettings
     }
 }
 
+#[instrument(skip(app))]
 fn start_in_app_listener(app: AppHandle) {
     if app
         .state::<AppState>()
         .in_app_listener_started
         .swap(true, Ordering::SeqCst)
     {
+        app.state::<AppState>()
+            .log_backend_event("listener", "ensure_in_app_listener called again; listener already running");
         return;
     }
+    app.state::<AppState>()
+        .log_backend_event("listener", "Starting in-app listener thread");
 
     std::thread::spawn(move || {
         let mut fired = HashSet::<String>::new();
+        let mut apps = list_installed_apps().unwrap_or_default();
+        let mut apps_loaded_at = Instant::now();
 
         loop {
             let state = app.state::<AppState>();
             let settings = state.settings.lock().unwrap().clone();
-            let Ok(workflows) = current_workflows_for_listener(&app, &settings) else {
-                std::thread::sleep(std::time::Duration::from_millis(400));
-                continue;
+            if !settings.macros_enabled {
+                state.log_backend_event(
+                    "listener",
+                    "Stopping in-app listener because macros are disabled in Settings.",
+                );
+                state
+                    .in_app_listener_started
+                    .store(false, Ordering::SeqCst);
+                break;
+            }
+
+            let workflows = match current_workflows_for_listener(&app, &settings) {
+                Ok(w) => w,
+                Err(e) => {
+                    state.log_backend_event("listener", format!("Failed to load workflows: {e}"));
+                    std::thread::sleep(std::time::Duration::from_millis(1000));
+                    continue;
+                }
             };
-            let apps = list_installed_apps().unwrap_or_default();
+            if apps_loaded_at.elapsed() >= Duration::from_secs(300) {
+                apps = list_installed_apps().unwrap_or_default();
+                apps_loaded_at = Instant::now();
+            }
 
             let foreground = foreground_process_name().unwrap_or_default();
             let active_ids = workflows
@@ -2398,16 +2571,73 @@ fn start_in_app_listener(app: AppHandle) {
                 .map(|workflow| workflow.id.clone())
                 .collect::<HashSet<_>>();
 
-            for workflow in workflows
-                .iter()
-                .filter(|workflow| active_ids.contains(&workflow.id) && !fired.contains(&workflow.id))
-            {
-                let _ = execute_workflow_nodes(workflow, &settings);
+            for workflow in workflows.iter().filter(|w| active_ids.contains(&w.id)) {
+                if fired.contains(&workflow.id) {
+                    continue;
+                }
+
+                if !state.try_start_workflow_run(&workflow.id) {
+                    state.log_backend_event(
+                        "listener",
+                        format!(
+                            "Skipped duplicate in-app trigger for workflow '{}' ({}) because it is already running",
+                            workflow.name, workflow.id
+                        ),
+                    );
+                    continue;
+                }
+
+                fired.insert(workflow.id.clone());
+
+                let workflow_inner = workflow.clone();
+                let settings_inner = settings.clone();
+                let app_inner = app.clone();
+                let run_id = WORKFLOW_RUN_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+                state.log_backend_event(
+                    "listener",
+                    format!(
+                        "Accepted in-app trigger run #{run_id} for workflow '{}' ({})",
+                        workflow_inner.name, workflow_inner.id
+                    ),
+                );
+
+                std::thread::spawn(move || {
+                    let state = app_inner.state::<AppState>();
+                    let started_at = Instant::now();
+                    state.log_backend_event(
+                        "workflow",
+                        format!(
+                            "Run #{run_id} started from in-app listener for workflow '{}' ({})",
+                            workflow_inner.name, workflow_inner.id
+                        ),
+                    );
+                    match execute_workflow_nodes(&workflow_inner, &settings_inner) {
+                        Ok(()) => state.log_backend_event(
+                            "workflow",
+                            format!(
+                                "Run #{run_id} finished successfully in {}ms for workflow '{}' ({})",
+                                started_at.elapsed().as_millis(),
+                                workflow_inner.name,
+                                workflow_inner.id
+                            ),
+                        ),
+                        Err(error) => state.log_backend_event(
+                            "workflow",
+                            format!(
+                                "Run #{run_id} failed after {}ms for workflow '{}' ({}): {}",
+                                started_at.elapsed().as_millis(),
+                                workflow_inner.name,
+                                workflow_inner.id,
+                                error
+                            ),
+                        ),
+                    }
+                    state.finish_workflow_run(&workflow_inner.id);
+                });
             }
 
             fired.retain(|id| active_ids.contains(id));
-            fired.extend(active_ids);
-            std::thread::sleep(std::time::Duration::from_millis(150));
+            std::thread::sleep(std::time::Duration::from_millis(700));
         }
     });
 }
@@ -2618,6 +2848,7 @@ pub async fn import_workflows(state: State<'_, AppState>, path: String) -> Resul
 }
 
 #[tauri::command]
+#[instrument]
 pub fn list_installed_apps() -> Result<Vec<InstalledApp>, String> {
     let mut apps = Vec::new();
     for app in known_app_candidates() {
@@ -2718,6 +2949,7 @@ pub async fn suggest_node_update(
 }
 
 #[tauri::command]
+#[instrument(skip(state))]
 pub async fn get_workflows(state: State<'_, AppState>) -> Result<Vec<Workflow>, String> {
     let settings = state.settings.lock().unwrap().clone();
     if settings.storage_mode == "mongodb" {
@@ -2991,9 +3223,13 @@ fn apply_workflow_payload(workflow: &mut Workflow, payload: &Value) {
 }
 
 #[tauri::command]
-pub fn test_node(payload: Value) -> Result<(), String> {
-    let settings = AppSettings::default();
-    execute_node(&json!({ "data": payload }), &settings).map(|_| ())
+pub async fn test_node(payload: Value) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = AppSettings::default();
+        execute_node(&json!({ "data": payload }), &settings).map(|_| ())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -3053,6 +3289,7 @@ pub fn ensure_in_app_listener(app: AppHandle) -> Result<bool, String> {
 }
 
 #[tauri::command]
+#[instrument(skip(state))]
 pub async fn execute_workflow(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let settings = state.settings.lock().unwrap().clone();
     let workflow = if settings.storage_mode == "mongodb" {
@@ -3064,7 +3301,55 @@ pub async fn execute_workflow(state: State<'_, AppState>, id: String) -> Result<
     }
     .ok_or_else(|| "Workflow not found".to_string())?;
 
-    execute_workflow_nodes(&workflow, &settings)
+    if !state.try_start_workflow_run(&workflow.id) {
+        let message = format!(
+            "Skipped duplicate manual run for workflow '{}' ({}) because it is already running",
+            workflow.name, workflow.id
+        );
+        state.log_backend_event("workflow", &message);
+        warn!(workflow_id = workflow.id, workflow_name = workflow.name, "{}", message);
+        return Ok(());
+    }
+
+    let run_id = WORKFLOW_RUN_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let workflow_id = workflow.id.clone();
+    let workflow_name = workflow.name.clone();
+    let started_at = Instant::now();
+    state.log_backend_event(
+        "workflow",
+        format!(
+            "Run #{run_id} started from manual execution for workflow '{}' ({})",
+            workflow_name, workflow_id
+        ),
+    );
+
+    let result = tauri::async_runtime::spawn_blocking(move || execute_workflow_nodes(&workflow, &settings))
+        .await
+        .map_err(|error| error.to_string())?;
+
+    match &result {
+        Ok(()) => state.log_backend_event(
+            "workflow",
+            format!(
+                "Run #{run_id} finished successfully in {}ms for workflow '{}' ({})",
+                started_at.elapsed().as_millis(),
+                workflow_name,
+                workflow_id
+            ),
+        ),
+        Err(error) => state.log_backend_event(
+            "workflow",
+            format!(
+                "Run #{run_id} failed after {}ms for workflow '{}' ({}): {}",
+                started_at.elapsed().as_millis(),
+                workflow_name,
+                workflow_id,
+                error
+            ),
+        ),
+    }
+    state.finish_workflow_run(&workflow_id);
+    result
 }
 
 pub fn init_state(app_handle: &AppHandle) -> AppState {
@@ -3079,6 +3364,7 @@ pub fn init_state(app_handle: &AppHandle) -> AppState {
 
     let workflows_path = app_dir.join("workflows.json");
     let settings_path = app_dir.join("settings.json");
+    let backend_log_path = app_dir.join("backend.log");
 
     let mut settings: AppSettings = if settings_path.exists() {
         let content = fs::read_to_string(&settings_path).unwrap_or_else(|_| "{}".to_string());
@@ -3099,8 +3385,11 @@ pub fn init_state(app_handle: &AppHandle) -> AppState {
     AppState {
         workflows_path,
         settings_path,
+        backend_log_path,
         workflows: Mutex::new(workflows),
         settings: Mutex::new(settings),
         in_app_listener_started: AtomicBool::new(false),
+        active_workflow_runs: Mutex::new(HashSet::new()),
+        log_write_lock: Mutex::new(()),
     }
 }

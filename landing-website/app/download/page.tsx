@@ -41,6 +41,24 @@ const releases = [
   { name: "Adv.Flow_1.0.0_amd64.deb", os: "Linux", arch: "x64", type: "Debian", url: "https://github.com/Razin-developer/adv.flow/releases/download/untagged-172ffb694775d30157dd/Adv.Flow_1.0.0_amd64.deb" },
   { name: "Adv.Flow_1.0.0_amd64.AppImage", os: "Linux", arch: "x64", type: "AppImage", url: "https://github.com/Razin-developer/adv.flow/releases/download/untagged-172ffb694775d30157dd/Adv.Flow_1.0.0_amd64.AppImage" },
 ];
+function TerminalCommand({ command }: { command: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = () => {
+    navigator.clipboard.writeText(command);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="terminal-command-container">
+      <code className="terminal-command-text">{command}</code>
+      <button onClick={copy} className="terminal-copy-button">
+        {copied ? "Copied!" : "Copy"}
+      </button>
+    </div>
+  );
+}
 
 export default function DownloadPage() {
   const [selectedRelease, setSelectedRelease] = useState<any>(null);
@@ -218,7 +236,13 @@ export default function DownloadPage() {
           <div className="list-stack">
             <div className="list-row"><span className="check-badge"><Check size={14} /></span>Windows: just run the installer or setup file.</div>
             <div className="list-row"><span className="check-badge"><Check size={14} /></span>Ubuntu: install the app, then add the CLI to PATH if needed.</div>
-            <div className="list-row"><span className="check-badge"><Check size={14} /></span>macOS: install the app, then add the CLI to PATH if needed.</div>
+            <div className="list-row macos-note">
+              <span className="check-badge"><Check size={14} /></span>
+              <div>
+                macOS: install from DMG. If it fails to open or for CLI access, run:
+                <TerminalCommand command="sudo ln -s /Applications/Adv.Flow.app/Contents/MacOS/advflow-cli /usr/local/bin/advflow" />
+              </div>
+            </div>
           </div>
         </div>
         <div className="panel-visual">

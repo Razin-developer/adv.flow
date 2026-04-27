@@ -2,5 +2,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("🔥 PANIC: {info}");
+        eprintln!("{}", std::backtrace::Backtrace::force_capture());
+    }));
+
     tauri_lib::run()
 }

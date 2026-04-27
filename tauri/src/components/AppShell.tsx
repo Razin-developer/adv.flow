@@ -47,8 +47,9 @@ export default function AppShell({
 
         <div className="sidebar-footer">
           <div className="sidebar-card">
-            <div className="sidebar-card-title">Builder tips</div>
-            <p>Drag blocks from the builder rail and keep the graph shallow for readable runs.</p>
+            <div className="sidebar-card-title">Report a bug</div>
+            <p>9946859838</p>
+            <p>razinmohammedpt@gmail.com</p>
           </div>
         </div>
       </aside>
