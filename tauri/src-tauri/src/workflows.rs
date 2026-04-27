@@ -2322,14 +2322,33 @@ fn foreground_process_name() -> Option<String> {
 
 
 
-fn app_matches_process(app_id: &str, process_name: &str) -> bool {
-    let process_name = process_name.to_ascii_lowercase();
-    match app_id {
-        "vscode" => process_name.contains("code"),
-        "cursor" => process_name.contains("cursor"),
-        "antigravity" => process_name.contains("antigravity"),
-        other => process_name.contains(&other.to_ascii_lowercase()),
+fn app_match_tokens(app: &InstalledApp) -> Vec<String> {
+    let mut tokens = vec![app.id.to_ascii_lowercase(), app.name.to_ascii_lowercase(), app.command.to_ascii_lowercase()];
+    if let Some(path) = &app.path {
+        if let Some(stem) = Path::new(path).file_stem().and_then(|value| value.to_str()) {
+            tokens.push(stem.to_ascii_lowercase());
+        }
     }
+    match app.id.as_str() {
+        "vscode" => tokens.extend(["code".to_string(), "visual studio code".to_string()]),
+        "cursor" => tokens.push("cursor".to_string()),
+        "antigravity" => tokens.push("antigravity".to_string()),
+        _ => {}
+    }
+    tokens
+}
+
+fn app_matches_process(app_id: &str, process_name: &str, apps: &[InstalledApp]) -> bool {
+    let process_name = process_name.to_ascii_lowercase();
+    let Some(app) = apps.iter().find(|app| app.id == app_id) else {
+        return process_name.contains(&app_id.to_ascii_lowercase());
+    };
+
+    app_match_tokens(app)
+        .into_iter()
+        .map(|token| token.replace(".app", "").replace('_', " ").replace('-', " "))
+        .filter(|token| !token.trim().is_empty())
+        .any(|token| process_name.contains(token.trim()))
 }
 
 fn execute_workflow_nodes(workflow: &Workflow, settings: &AppSettings) -> Result<(), String> {
@@ -2366,6 +2385,7 @@ fn start_in_app_listener(app: AppHandle) {
                 std::thread::sleep(std::time::Duration::from_millis(400));
                 continue;
             };
+            let apps = list_installed_apps().unwrap_or_default();
 
             let foreground = foreground_process_name().unwrap_or_default();
             let active_ids = workflows
@@ -2373,7 +2393,7 @@ fn start_in_app_listener(app: AppHandle) {
                 .filter(|workflow| workflow.kind == "inApp")
                 .filter(|workflow| !workflow.entry_hotkey.trim().is_empty())
                 .filter(|workflow| !workflow.base_app_id.trim().is_empty())
-                .filter(|workflow| app_matches_process(&workflow.base_app_id, &foreground))
+                .filter(|workflow| app_matches_process(&workflow.base_app_id, &foreground, &apps))
                 .filter(|workflow| hotkey_is_pressed(&workflow.entry_hotkey))
                 .map(|workflow| workflow.id.clone())
                 .collect::<HashSet<_>>();

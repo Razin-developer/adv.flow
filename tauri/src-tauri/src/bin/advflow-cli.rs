@@ -10,7 +10,11 @@ fn app_data_candidates() -> Vec<PathBuf> {
     let roots = [
         env::var_os("APPDATA").map(PathBuf::from),
         env::var_os("LOCALAPPDATA").map(PathBuf::from),
-        env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")),
+        env::var_os("XDG_CONFIG_HOME").map(PathBuf::from),
+        env::var_os("XDG_DATA_HOME").map(PathBuf::from),
+        env::var_os("HOME").map(|home| PathBuf::from(&home).join(".config")),
+        env::var_os("HOME").map(|home| PathBuf::from(&home).join(".local/share")),
+        env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Application Support")),
     ];
     let names = ["com.advflow.app", "Adv.Flow", "Advflow", "advflow"];
 

@@ -8,7 +8,11 @@ function appDataCandidates() {
   const roots = [
     process.env.APPDATA,
     process.env.LOCALAPPDATA,
+    process.env.XDG_CONFIG_HOME,
+    process.env.XDG_DATA_HOME,
     process.env.HOME && path.join(process.env.HOME, ".config"),
+    process.env.HOME && path.join(process.env.HOME, ".local", "share"),
+    process.env.HOME && path.join(process.env.HOME, "Library", "Application Support"),
   ].filter(Boolean);
   const names = ["com.advflow.app", "Adv.Flow", "Advflow", "advflow"];
   return roots.flatMap((root) => names.map((name) => path.join(root, name, "workflows.json")));
@@ -18,7 +22,15 @@ function findWorkflowStore() {
   const direct = appDataCandidates().find((candidate) => fs.existsSync(candidate));
   if (direct) return direct;
 
-  for (const root of [process.env.APPDATA, process.env.LOCALAPPDATA].filter(Boolean)) {
+  for (const root of [
+    process.env.APPDATA,
+    process.env.LOCALAPPDATA,
+    process.env.XDG_CONFIG_HOME,
+    process.env.XDG_DATA_HOME,
+    process.env.HOME && path.join(process.env.HOME, ".config"),
+    process.env.HOME && path.join(process.env.HOME, ".local", "share"),
+    process.env.HOME && path.join(process.env.HOME, "Library", "Application Support"),
+  ].filter(Boolean)) {
     try {
       const found = fs
         .readdirSync(root, { withFileTypes: true })

@@ -103,6 +103,7 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
   const [currentId, setCurrentId] = useState<string | null>(workflowId ?? null);
   const [autoSaveDelay, setAutoSaveDelay] = useState(900);
   const [installedApps, setInstalledApps] = useState<InstalledApp[]>([]);
+  const inAppCandidates = installedApps;
 
   const hydratedRef = useRef(false);
   const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -312,7 +313,7 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
               <label className="field" style={{ marginTop: 0 }}>
                 <span>Base app</span>
                 <AppPicker
-                  apps={installedApps.filter((app) => ['vscode', 'cursor', 'antigravity'].includes(app.id))}
+                  apps={inAppCandidates}
                   value={baseAppId}
                   onChange={(app) => setBaseAppId(app.id)}
                 />
