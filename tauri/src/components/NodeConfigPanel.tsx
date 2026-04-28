@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import type { Node } from 'reactflow';
 import { invoke } from '@tauri-apps/api/core';
 import { BROWSERS, getDefaultShell, getShellOptions } from '@/lib/plugins';
+import { keyEventToCombo } from '@/lib/shortcuts';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Sparkles } from 'lucide-react';
 import { useAppDialog } from '@/components/AppDialog';
@@ -17,12 +18,40 @@ interface NodeConfigPanelProps {
 export default function NodeConfigPanel({ node, onChange }: NodeConfigPanelProps) {
   const dialog = useAppDialog();
   const [installedApps, setInstalledApps] = useState<InstalledApp[]>([]);
+  const [listeningCombo, setListeningCombo] = useState(false);
+
+  const updateField = (key: string, value: string | number | boolean | string[]) => {
+    onChange((currentNode) => ({
+      ...currentNode,
+      data: {
+        ...currentNode.data,
+        [key]: value,
+      },
+    }));
+  };
 
   useEffect(() => {
     void invoke<InstalledApp[]>('list_installed_apps')
       .then(setInstalledApps)
       .catch(() => setInstalledApps([]));
   }, []);
+
+  useEffect(() => {
+    if (!listeningCombo || !node) return;
+
+    function onKeyDown(event: KeyboardEvent) {
+      event.preventDefault();
+      event.stopPropagation();
+      const combo = keyEventToCombo(event);
+      if (combo) {
+        updateField('combo', combo);
+        setListeningCombo(false);
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [listeningCombo, node]);
 
   if (!node) {
     return (
@@ -34,16 +63,6 @@ export default function NodeConfigPanel({ node, onChange }: NodeConfigPanelProps
       </section>
     );
   }
-
-  const updateField = (key: string, value: string | number | boolean | string[]) => {
-    onChange((currentNode) => ({
-      ...currentNode,
-      data: {
-        ...currentNode.data,
-        [key]: value,
-      },
-    }));
-  };
 
   const handleAppChange = (appId: string) => {
     const app = installedApps.find((item) => item.id === appId);
@@ -62,6 +81,13 @@ export default function NodeConfigPanel({ node, onChange }: NodeConfigPanelProps
       },
     }));
   };
+
+  const selectedTargetAppId =
+    installedApps.find((app) =>
+      [app.id, app.name, app.command].some((value) =>
+        value.toLowerCase() === String(node?.data.targetApp || '').toLowerCase(),
+      ),
+    )?.id || '';
 
   const handleBrowse = async (key: string) => {
     const selected = await open({
@@ -203,7 +229,16 @@ export default function NodeConfigPanel({ node, onChange }: NodeConfigPanelProps
         {node.data.type === 'macroKeyCombo' ? (
           <label className="field">
             <span>Key combo</span>
-            <input value={node.data.combo || ''} onChange={(event) => updateField('combo', event.target.value)} placeholder="Alt+Left" />
+            <div className="input-row">
+              <input value={node.data.combo || ''} onChange={(event) => updateField('combo', event.target.value)} placeholder="Alt+Left" />
+              <button
+                className={`ghost-button ${listeningCombo ? 'is-active' : ''}`}
+                type="button"
+                onClick={() => setListeningCombo(true)}
+              >
+                {listeningCombo ? 'Press keys' : 'Listen'}
+              </button>
+            </div>
           </label>
         ) : null}
 
@@ -259,6 +294,27 @@ export default function NodeConfigPanel({ node, onChange }: NodeConfigPanelProps
                 <option value="vertical">Vertical</option>
                 <option value="horizontal">Horizontal</option>
               </select>
+            </label>
+          </>
+        ) : null}
+
+        {node.data.type === 'waitActiveApp' ? (
+          <>
+            <label className="field">
+              <span>Target app</span>
+              <input value={node.data.targetApp || ''} onChange={(event) => updateField('targetApp', event.target.value)} />
+            </label>
+            <label className="field">
+              <span>App selector</span>
+              <AppPicker
+                apps={installedApps}
+                value={selectedTargetAppId}
+                onChange={(app) => updateField('targetApp', app.name)}
+              />
+            </label>
+            <label className="field">
+              <span>Timeout (ms)</span>
+              <input type="number" value={node.data.timeoutMs ?? 5000} onChange={(event) => updateField('timeoutMs', Number(event.target.value))} />
             </label>
           </>
         ) : null}

@@ -12,6 +12,7 @@ const LABELS: Record<string, string> = {
   macroMouseClick: 'Mouse Click',
   macroMoveMouse: 'Move Mouse',
   macroScroll: 'Scroll',
+  waitActiveApp: 'Wait Active App',
   delay: 'Delay',
 };
 

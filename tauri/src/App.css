@@ -231,7 +231,7 @@ a {
 }
 
 .hero-grid {
-  grid-template-columns: 1.4fr 1fr 1fr;
+  grid-template-columns: 1.3fr repeat(3, minmax(0, 1fr));
 }
 
 .integration-grid,
@@ -696,13 +696,13 @@ a {
 
 .builder-shell {
   width: 100%;
-  height: 100%;
-  margin-bottom: 8rem;
+  height: 100vh;
+  max-height: 100vh;
   display: grid;
   grid-template-rows: auto auto 1fr;
   padding: 20px;
   gap: 12px;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .builder-toolbar,
@@ -734,6 +734,14 @@ a {
   display: grid;
   grid-template-columns: minmax(160px, 0.7fr) minmax(220px, 1fr);
   gap: 8px;
+}
+
+.builder-app-picker {
+  max-width: 460px;
+}
+
+.builder-app-picker .app-picker-list {
+  max-height: 118px;
 }
 
 .builder-title {
@@ -772,15 +780,18 @@ a {
 
 .canvas-shell {
   min-height: 0;
+  height: 100%;
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr) 320px;
   gap: 12px;
+  overflow: hidden;
 }
 
 .block-sidebar,
 .config-panel,
 .execution-panel {
   padding: 14px;
+  min-height: 0;
 }
 
 .block-list,
@@ -791,7 +802,25 @@ a {
 }
 
 .builder-right-rail {
-  grid-template-rows: auto minmax(240px, 1fr);
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.block-sidebar {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: auto;
+}
+
+.block-list {
+  overflow: auto;
+}
+
+.config-panel,
+.execution-panel {
+  height: 100%;
+  overflow: auto;
 }
 
 .sidebar-header h2,
@@ -863,6 +892,16 @@ a {
 .input-row {
   display: flex;
   gap: 8px;
+}
+
+.input-row input {
+  min-width: 0;
+}
+
+.ghost-button.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .ai-workflow-panel {
@@ -978,7 +1017,7 @@ a {
 }
 
 .log-list {
-  overflow: auto;
+  overflow: hidden;
 }
 
 .log-item {

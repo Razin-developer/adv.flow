@@ -3,11 +3,14 @@ import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { DialogProvider, useAppDialog } from "@/components/AppDialog";
 import BuilderWrapper from "@/BuilderWrapper";
+import DashboardPage from "@/pages/DashboardPage";
+import InAppPage from "@/pages/InAppPage";
 import IntegrationsPage from "@/pages/IntegrationsPage";
 import RunsPage from "@/pages/RunsPage";
 import SettingsPage from "@/pages/SettingsPage";
 import TemplatesPage from "@/pages/TemplatesPage";
 import WorkflowsPage from "@/pages/WorkflowPage";
+import { isInAppWorkflow } from "@/lib/workflowKinds";
 import type { AppSettings } from "@/types/settings";
 import type { Workflow } from "@/types/workflow";
 import "./App.css";
@@ -29,6 +32,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   developerMode: false,
   telemetryEnabled: false,
   syncOnOpen: false,
+  macrosEnabled: true,
   preferredBrowser: "chrome",
   preferredEditor: "vscode",
   aiProvider: "gemini",
@@ -79,7 +83,7 @@ function AppRouter() {
     void loadSettings();
   }, []);
 
-  async function handleCreateWorkflow(payload?: Partial<Workflow>) {
+  async function handleCreateWorkflow(payload?: Partial<Workflow>, backTo = "/workflows") {
     const created = await invoke<Workflow>("create_workflow", {
       payload: {
         name: payload?.name || "New Workflow",
@@ -94,7 +98,35 @@ function AppRouter() {
       },
     });
     await loadWorkflows();
-    navigate(`/builder/${created.id || created._id}`);
+    navigate(`/builder/${created.id || created._id}`, { state: { backTo } });
+  }
+
+  function handleCreateInAppWorkflow() {
+    const starterId = `node_${Date.now()}`;
+    void handleCreateWorkflow(
+      {
+        name: "New In-app Workflow",
+        description: "Shortcut-triggered workflow for the active app.",
+        tags: ["in-app", "macro"],
+        shortcut: "Shift+Minus",
+        targetApp: "",
+        nodes: [
+          {
+            id: starterId,
+            type: "macroKeyCombo",
+            position: { x: 120, y: 100 },
+            data: {
+              id: starterId,
+              type: "macroKeyCombo",
+              label: "Back",
+              combo: "Alt+Left",
+            },
+          },
+        ],
+        edges: [],
+      },
+      "/in-app",
+    );
   }
 
   async function handleDuplicateWorkflow(id: string) {
@@ -150,12 +182,39 @@ function AppRouter() {
   return (
     <div style={{ overflow: "hidden", width: "100%", height: "100%" }}>
       <Routes>
-        <Route path="/" element={<Navigate to="/workflows" replace />} />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        <Route
+          path="/dashboard"
+          element={
+            <DashboardPage
+              workflows={workflows}
+              onOpenWorkflow={(id: string) => navigate(`/builder/${id}`, { state: { backTo: "/in-app" } })}
+              onRefreshWorkflows={loadWorkflows}
+              onRunWorkflow={handleRunWorkflow}
+            />
+          }
+        />
+        <Route
+          path="/in-app"
+          element={
+            <InAppPage
+              workflows={workflows.filter(isInAppWorkflow)}
+              loading={loadingWorkflows}
+              onCreateWorkflow={handleCreateInAppWorkflow}
+              onOpenWorkflow={(id: string) => navigate(`/builder/${id}`, { state: { backTo: "/in-app" } })}
+              onDuplicateWorkflow={(id: string) => void handleDuplicateWorkflow(id)}
+              onDeleteWorkflow={(id: string) => void handleDeleteWorkflow(id)}
+              onToggleFavorite={(id: string) => void handleToggleFavorite(id)}
+              onImportComplete={loadWorkflows}
+              onRunWorkflow={handleRunWorkflow}
+            />
+          }
+        />
         <Route
           path="/workflows"
           element={
             <WorkflowsPage
-              workflows={workflows}
+              workflows={workflows.filter((workflow) => !isInAppWorkflow(workflow))}
               loading={loadingWorkflows}
               onCreateWorkflow={() => void handleCreateWorkflow()}
               onOpenWorkflow={(id: string) => navigate(`/builder/${id}`)}
@@ -185,7 +244,7 @@ function AppRouter() {
           element={
             <SettingsPage
               settings={settings}
-              onOpenMacroList={() => navigate("/workflows")}
+              onOpenMacroList={() => navigate("/in-app")}
               onSaveSettings={handleSaveSettings}
               onTestMongo={async () => invoke<string>("test_mongodb_connection")}
               onSyncLocalToMongo={async () => {

@@ -17,21 +17,28 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let state = workflows::init_state(app.handle());
+            let enable_macros = workflows::macros_enabled(&state);
             app.manage(state);
             #[cfg(desktop)]
             {
                 use tauri_plugin_global_shortcut::ShortcutState;
 
-                app.handle().plugin(
-                    tauri_plugin_global_shortcut::Builder::new()
-                        .with_handler(|app, shortcut, event| {
-                            if event.state() == ShortcutState::Pressed {
-                                workflows::handle_global_shortcut(app, shortcut);
-                            }
-                        })
-                        .build(),
-                )?;
-                workflows::register_workflow_shortcuts(app.handle())?;
+                if enable_macros {
+                    app.handle().plugin(
+                        tauri_plugin_global_shortcut::Builder::new()
+                            .with_handler(|app, shortcut, event| {
+                                if event.state() == ShortcutState::Pressed {
+                                    workflows::handle_global_shortcut(app, shortcut);
+                                }
+                            })
+                            .build(),
+                    )?;
+                    *app.state::<workflows::AppState>()
+                        .macro_shortcuts_initialized
+                        .lock()
+                        .unwrap() = true;
+                    workflows::register_workflow_shortcuts(app.handle())?;
+                }
             }
             Ok(())
         })

@@ -11,6 +11,7 @@ const DESKTOP_BLOCKS = [
   { type: 'macroMouseClick', name: 'Mouse Click', description: 'Click the current mouse position.' },
   { type: 'macroMoveMouse', name: 'Move Mouse', description: 'Move the pointer by absolute or relative coordinates.' },
   { type: 'macroScroll', name: 'Scroll', description: 'Scroll vertically or horizontally.' },
+  { type: 'waitActiveApp', name: 'Wait Active App', description: 'Continue when the target application is focused.' },
   { type: 'delay', name: 'Delay', description: 'Pause or wait for a URL to respond.' },
 ] as const;
 

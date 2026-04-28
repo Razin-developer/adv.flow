@@ -1,5 +1,7 @@
 import {
   Gauge,
+  Home,
+  Keyboard,
   LayoutDashboard,
   Network,
   Settings2,
@@ -23,7 +25,9 @@ export type Template = {
 };
 
 export const NAV_ITEMS: NavItem[] = [
+  { to: "/dashboard", label: "Dashboard", icon: Home },
   { to: "/workflows", label: "Workflows", icon: LayoutDashboard },
+  { to: "/in-app", label: "In-app", icon: Keyboard },
   { to: "/templates", label: "Templates", icon: WandSparkles },
   { to: "/runs", label: "Runs", icon: Gauge },
   { to: "/integrations", label: "Integrations", icon: Network },

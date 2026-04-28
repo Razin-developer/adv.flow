@@ -7,6 +7,7 @@ export type BlockType =
   | 'macroMouseClick'
   | 'macroMoveMouse'
   | 'macroScroll'
+  | 'waitActiveApp'
   | 'delay';
 export type Browser = 'system' | 'chrome' | 'edge' | 'brave' | 'firefox' | 'safari' | 'comet';
 export type TerminalMode = 'background' | 'newWindow';
@@ -21,6 +22,7 @@ export interface MacroTypeTextConfig { type: 'macroTypeText'; text: string; labe
 export interface MacroMouseClickConfig { type: 'macroMouseClick'; button: 'left' | 'middle' | 'right'; label: string; }
 export interface MacroMoveMouseConfig { type: 'macroMoveMouse'; x: number; y: number; coordinate: 'absolute' | 'relative'; label: string; }
 export interface MacroScrollConfig { type: 'macroScroll'; amount: number; axis: 'vertical' | 'horizontal'; label: string; }
+export interface WaitActiveAppConfig { type: 'waitActiveApp'; targetApp: string; timeoutMs: number; label: string; }
 export interface DelayConfig      { type: 'delay';       delay: number; waitUrl?: string; label: string; }
 
 export type BlockConfig =
@@ -32,6 +34,7 @@ export type BlockConfig =
   | MacroMouseClickConfig
   | MacroMoveMouseConfig
   | MacroScrollConfig
+  | WaitActiveAppConfig
   | DelayConfig;
 
 export interface InstalledApp {

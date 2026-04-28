@@ -244,6 +244,17 @@ export default function SettingsPage({
             </label>
             <label className="toggle-card">
               <div>
+                <strong>Enable macros</strong>
+                <span>Register global shortcuts for in-app workflows on launch.</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={draft.macrosEnabled}
+                onChange={(event) => setField("macrosEnabled", event.target.checked)}
+              />
+            </label>
+            <label className="toggle-card">
+              <div>
                 <strong>Confirm destructive actions</strong>
                 <span>Require confirmation before deleting or replacing workflows.</span>
               </div>

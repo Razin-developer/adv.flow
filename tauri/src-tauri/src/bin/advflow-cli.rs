@@ -21,7 +21,11 @@ fn app_data_candidates() -> Vec<PathBuf> {
     roots
         .into_iter()
         .flatten()
-        .flat_map(|root| names.iter().map(move |name| root.join(name).join("workflows.json")))
+        .flat_map(|root| {
+            names
+                .iter()
+                .map(move |name| root.join(name).join("workflows.json"))
+        })
         .collect()
 }
 
@@ -29,7 +33,9 @@ fn workflows_path() -> Result<PathBuf, String> {
     app_data_candidates()
         .into_iter()
         .find(|path| path.exists())
-        .ok_or_else(|| "No AdvFlow workflow store found. Open the desktop app once first.".to_string())
+        .ok_or_else(|| {
+            "No AdvFlow workflow store found. Open the desktop app once first.".to_string()
+        })
 }
 
 fn load_workflows() -> Result<Vec<Value>, String> {
@@ -56,8 +62,44 @@ fn workflow_id(workflow: &Value) -> &str {
     string_field(workflow, "id")
 }
 
+fn node_type(node: &Value) -> &str {
+    string_field(data_for_node(node), "type")
+}
+
+fn is_macro_workflow(workflow: &Value) -> bool {
+    if !string_field(workflow, "shortcut").trim().is_empty()
+        || !string_field(workflow, "targetApp").trim().is_empty()
+    {
+        return true;
+    }
+
+    workflow
+        .get("nodes")
+        .and_then(Value::as_array)
+        .is_some_and(|nodes| {
+            nodes.iter().any(|node| {
+                matches!(
+                    node_type(node),
+                    "macroKeyCombo"
+                        | "macroTypeText"
+                        | "macroMouseClick"
+                        | "macroMoveMouse"
+                        | "macroScroll"
+                        | "waitActiveApp"
+                )
+            })
+        })
+}
+
+fn load_terminal_workflows() -> Result<Vec<Value>, String> {
+    Ok(load_workflows()?
+        .into_iter()
+        .filter(|workflow| !is_macro_workflow(workflow))
+        .collect())
+}
+
 fn list_workflows() -> Result<(), String> {
-    let workflows = load_workflows()?;
+    let workflows = load_terminal_workflows()?;
     if workflows.is_empty() {
         println!("No terminal-runnable workflows yet.");
         return Ok(());
@@ -86,10 +128,16 @@ fn resolve_working_directory(value: &str) -> Result<PathBuf, String> {
     };
 
     if !path.exists() {
-        return Err(format!("Working directory does not exist: {}", path.display()));
+        return Err(format!(
+            "Working directory does not exist: {}",
+            path.display()
+        ));
     }
     if !path.is_dir() {
-        return Err(format!("Working directory is not a folder: {}", path.display()));
+        return Err(format!(
+            "Working directory is not a folder: {}",
+            path.display()
+        ));
     }
     Ok(path)
 }
@@ -113,7 +161,10 @@ fn command_exists(command: &str) -> bool {
 
 fn shell_command_and_args(shell_type: &str, command: &str) -> (String, Vec<String>) {
     match shell_type {
-        "cmd" => ("cmd".to_string(), vec!["/c".to_string(), command.to_string()]),
+        "cmd" => (
+            "cmd".to_string(),
+            vec!["/c".to_string(), command.to_string()],
+        ),
         "powershell" => (
             "powershell".to_string(),
             vec![
@@ -128,7 +179,11 @@ fn shell_command_and_args(shell_type: &str, command: &str) -> (String, Vec<Strin
             if command_exists("pwsh") {
                 (
                     "pwsh".to_string(),
-                    vec!["-NoProfile".to_string(), "-Command".to_string(), command.to_string()],
+                    vec![
+                        "-NoProfile".to_string(),
+                        "-Command".to_string(),
+                        command.to_string(),
+                    ],
                 )
             } else {
                 (
@@ -142,10 +197,19 @@ fn shell_command_and_args(shell_type: &str, command: &str) -> (String, Vec<Strin
                     ],
                 )
             }
-        },
-        "bash" => ("bash".to_string(), vec!["-lc".to_string(), command.to_string()]),
-        "zsh" => ("zsh".to_string(), vec!["-lc".to_string(), command.to_string()]),
-        "sh" => ("sh".to_string(), vec!["-lc".to_string(), command.to_string()]),
+        }
+        "bash" => (
+            "bash".to_string(),
+            vec!["-lc".to_string(), command.to_string()],
+        ),
+        "zsh" => (
+            "zsh".to_string(),
+            vec!["-lc".to_string(), command.to_string()],
+        ),
+        "sh" => (
+            "sh".to_string(),
+            vec!["-lc".to_string(), command.to_string()],
+        ),
         _ => {
             if cfg!(windows) {
                 (
@@ -161,7 +225,10 @@ fn shell_command_and_args(shell_type: &str, command: &str) -> (String, Vec<Strin
             } else if let Ok(user_shell) = env::var("SHELL") {
                 (user_shell, vec!["-lc".to_string(), command.to_string()])
             } else {
-                ("sh".to_string(), vec!["-lc".to_string(), command.to_string()])
+                (
+                    "sh".to_string(),
+                    vec!["-lc".to_string(), command.to_string()],
+                )
             }
         }
     }
@@ -169,7 +236,7 @@ fn shell_command_and_args(shell_type: &str, command: &str) -> (String, Vec<Strin
 
 fn start_new_terminal(shell_type: &str, cwd: &Path, command: &str) -> Result<(), String> {
     let cwd_text = cwd.to_string_lossy();
-    
+
     if cfg!(windows) {
         let (shell_command, _shell_args) = shell_command_and_args(shell_type, command);
         let mut args = vec![
@@ -185,11 +252,19 @@ fn start_new_terminal(shell_type: &str, cwd: &Path, command: &str) -> Result<(),
                 "-ExecutionPolicy".to_string(),
                 "Bypass".to_string(),
                 "-Command".to_string(),
-                format!("Set-Location -LiteralPath {}; {}", ps_quote(&cwd_text), command),
+                format!(
+                    "Set-Location -LiteralPath {}; {}",
+                    ps_quote(&cwd_text),
+                    command
+                ),
             ]);
         } else {
             args.push("/k".to_string());
-            args.push(format!("cd /d \"{}\" && {}", cwd_text.replace('"', "\"\""), command));
+            args.push(format!(
+                "cd /d \"{}\" && {}",
+                cwd_text.replace('"', "\"\""),
+                command
+            ));
         }
         Command::new("cmd")
             .args(args)
@@ -226,19 +301,39 @@ fn start_new_terminal(shell_type: &str, cwd: &Path, command: &str) -> Result<(),
             let mut process = Command::new(launcher);
             match launcher {
                 "wezterm" => {
-                    process.args(prefix).arg(cwd).arg("sh").arg("-lc").arg(&script);
+                    process
+                        .args(prefix)
+                        .arg(cwd)
+                        .arg("sh")
+                        .arg("-lc")
+                        .arg(&script);
                 }
                 "kitty" => {
-                    process.arg("--directory").arg(cwd).args(prefix).arg(&script);
+                    process
+                        .arg("--directory")
+                        .arg(cwd)
+                        .args(prefix)
+                        .arg(&script);
                 }
                 "alacritty" => {
-                    process.arg("--working-directory").arg(cwd).args(prefix).arg(&script);
+                    process
+                        .arg("--working-directory")
+                        .arg(cwd)
+                        .args(prefix)
+                        .arg(&script);
                 }
                 "xfce4-terminal" => {
-                    process.arg("--working-directory").arg(cwd).arg("-e").arg(format!("sh -lc {}", sh_quote(&script)));
+                    process
+                        .arg("--working-directory")
+                        .arg(cwd)
+                        .arg("-e")
+                        .arg(format!("sh -lc {}", sh_quote(&script)));
                 }
                 "gnome-terminal" => {
-                    process.arg(format!("--working-directory={}", cwd.display())).args(prefix).arg(&script);
+                    process
+                        .arg(format!("--working-directory={}", cwd.display()))
+                        .args(prefix)
+                        .arg(&script);
                 }
                 "konsole" => {
                     process.arg("--workdir").arg(cwd).args(prefix).arg(&script);
@@ -250,11 +345,12 @@ fn start_new_terminal(shell_type: &str, cwd: &Path, command: &str) -> Result<(),
             process.spawn().map_err(|error| error.to_string())?;
             return Ok(());
         }
-        return Err("No supported terminal application was found on this Linux system.".to_string());
+        return Err(
+            "No supported terminal application was found on this Linux system.".to_string(),
+        );
     }
     Ok(())
 }
-
 
 fn run_command_node(data: &Value) -> Result<(), String> {
     let command = string_field(data, "command");
@@ -278,8 +374,7 @@ fn run_command_node(data: &Value) -> Result<(), String> {
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()
-    .map_err(|error| error.to_string())?;
-
+        .map_err(|error| error.to_string())?;
 
     if status.success() {
         Ok(())
@@ -320,7 +415,13 @@ fn open_app_node(data: &Value) -> Result<(), String> {
             )
         };
         Command::new("powershell")
-            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &script,
+            ])
             .spawn()
             .map_err(|error| error.to_string())?;
     } else if cfg!(target_os = "macos") {
@@ -351,7 +452,11 @@ fn open_app_node(data: &Value) -> Result<(), String> {
             }
             process.spawn().map_err(|error| error.to_string())?;
         } else {
-            let target = if folder.trim().is_empty() { command } else { folder };
+            let target = if folder.trim().is_empty() {
+                command
+            } else {
+                folder
+            };
             Command::new("xdg-open")
                 .arg(target)
                 .spawn()
@@ -361,13 +466,12 @@ fn open_app_node(data: &Value) -> Result<(), String> {
     Ok(())
 }
 
-
 fn open_browser_node(data: &Value) -> Result<(), String> {
     let url = string_field(data, "url");
     if url.trim().is_empty() {
         return Err("URL is empty".to_string());
     }
-    
+
     if cfg!(windows) {
         let browser = match string_field(data, "browser") {
             "edge" => "msedge",
@@ -393,7 +497,10 @@ fn open_browser_node(data: &Value) -> Result<(), String> {
         if let Some(app_name) = app_name {
             process.arg("-a").arg(app_name);
         }
-        process.arg(url).spawn().map_err(|error| error.to_string())?;
+        process
+            .arg(url)
+            .spawn()
+            .map_err(|error| error.to_string())?;
     } else {
         let candidates = match string_field(data, "browser") {
             "chrome" => vec!["google-chrome", "chromium", "chromium-browser"],
@@ -402,7 +509,10 @@ fn open_browser_node(data: &Value) -> Result<(), String> {
             "firefox" => vec!["firefox"],
             _ => vec![],
         };
-        if let Some(browser) = candidates.into_iter().find(|candidate| command_exists(candidate)) {
+        if let Some(browser) = candidates
+            .into_iter()
+            .find(|candidate| command_exists(candidate))
+        {
             Command::new(browser)
                 .arg(url)
                 .spawn()
@@ -416,7 +526,6 @@ fn open_browser_node(data: &Value) -> Result<(), String> {
     }
     Ok(())
 }
-
 
 fn run_node(node: &Value) -> Result<(), String> {
     let data = data_for_node(node);
@@ -434,11 +543,13 @@ fn run_node(node: &Value) -> Result<(), String> {
 }
 
 fn run_workflow(name_or_id: &str) -> Result<(), String> {
-    let workflows = load_workflows()?;
+    let workflows = load_terminal_workflows()?;
     let wanted = name_or_id.to_lowercase();
     let workflow = workflows
         .iter()
-        .find(|workflow| workflow_id(workflow) == name_or_id || workflow_name(workflow).to_lowercase() == wanted)
+        .find(|workflow| {
+            workflow_id(workflow) == name_or_id || workflow_name(workflow).to_lowercase() == wanted
+        })
         .ok_or_else(|| format!("Workflow not found: {name_or_id}"))?;
 
     let nodes = workflow
@@ -449,7 +560,14 @@ fn run_workflow(name_or_id: &str) -> Result<(), String> {
     for node in nodes {
         let data = data_for_node(node);
         let label = string_field(data, "label");
-        println!("> {}", if label.is_empty() { string_field(data, "type") } else { label });
+        println!(
+            "> {}",
+            if label.is_empty() {
+                string_field(data, "type")
+            } else {
+                label
+            }
+        );
         run_node(node)?;
     }
 

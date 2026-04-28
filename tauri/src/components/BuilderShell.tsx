@@ -5,9 +5,12 @@ import type { Edge, Node } from 'reactflow';
 import type { Workflow, WorkflowKind } from '@/types/workflow';
 import type { AppSettings } from '@/types/settings';
 import Canvas from '@/components/Canvas';
+import AppPicker from '@/components/AppPicker';
 import { invoke } from "@tauri-apps/api/core";
 import { ArrowLeft, Save, Star } from 'lucide-react';
 import { useAppDialog } from '@/components/AppDialog';
+import { keyEventToCombo } from '@/lib/shortcuts';
+import type { InstalledApp } from '@/types/workflow';
 
 const EMPTY_WORKFLOW: Workflow = {
   name: 'Untitled workflow',
@@ -97,6 +100,8 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
   const [kind, setKind] = useState<WorkflowKind>('desktop');
   const [shortcut, setShortcut] = useState('');
   const [targetApp, setTargetApp] = useState('');
+  const [installedApps, setInstalledApps] = useState<InstalledApp[]>([]);
+  const [listeningShortcut, setListeningShortcut] = useState(false);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(workflowId ?? null);
@@ -145,6 +150,29 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    void invoke<InstalledApp[]>('list_installed_apps')
+      .then(setInstalledApps)
+      .catch(() => setInstalledApps([]));
+  }, []);
+
+  useEffect(() => {
+    if (!listeningShortcut) return;
+
+    function onKeyDown(event: KeyboardEvent) {
+      event.preventDefault();
+      event.stopPropagation();
+      const combo = keyEventToCombo(event);
+      if (combo) {
+        setShortcut(combo);
+        setListeningShortcut(false);
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [listeningShortcut]);
 
   useEffect(() => {
     if (mode !== 'edit' || !workflowId) {
@@ -281,6 +309,11 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
 
   if (loading) return <div className="builder-loading">Loading workflow...</div>;
 
+  const selectedTargetAppId =
+    installedApps.find((app) =>
+      [app.id, app.name, app.command].some((value) => value.toLowerCase() === targetApp.toLowerCase()),
+    )?.id || '';
+
   return (
     <div className="builder-shell">
       <header className="builder-toolbar">
@@ -302,17 +335,33 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
             placeholder="Describe what this workflow does"
           />
           <div className="builder-trigger-row">
-            <input
-              className="builder-shortcut"
-              value={shortcut}
-              onChange={(event) => setShortcut(event.target.value)}
-              placeholder="Shortcut, e.g. Shift+Minus"
-            />
+            <div className="input-row">
+              <input
+                className="builder-shortcut"
+                value={shortcut}
+                onChange={(event) => setShortcut(event.target.value)}
+                placeholder="Shortcut, e.g. Shift+Minus"
+              />
+              <button
+                className={`ghost-button ${listeningShortcut ? 'is-active' : ''}`}
+                type="button"
+                onClick={() => setListeningShortcut(true)}
+              >
+                {listeningShortcut ? 'Press keys' : 'Listen'}
+              </button>
+            </div>
             <input
               className="builder-target-app"
               value={targetApp}
               onChange={(event) => setTargetApp(event.target.value)}
               placeholder="Target app, blank for global"
+            />
+          </div>
+          <div className="builder-app-picker">
+            <AppPicker
+              apps={installedApps}
+              value={selectedTargetAppId}
+              onChange={(app) => setTargetApp(app.name)}
             />
           </div>
         </div>

@@ -52,6 +52,8 @@ function defaultNodeData(type: string) {
       return { type, id: '', label: 'Move Mouse', x: 0, y: 0, coordinate: 'absolute' };
     case 'macroScroll':
       return { type, id: '', label: 'Scroll', amount: 3, axis: 'vertical' };
+    case 'waitActiveApp':
+      return { type, id: '', label: 'Wait Active App', targetApp: '', timeoutMs: 5000 };
     case 'delay':
       return { type, id: '', label: 'Delay', delay: 1000, waitUrl: '' };
     default:

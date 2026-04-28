@@ -1,9 +1,11 @@
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import BuilderShell from '@/components/BuilderShell';
 
 export default function BuilderWrapper() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  const backTo = (location.state as { backTo?: string } | null)?.backTo || '/workflows';
 
   if (!id) {
     return <div>No workflow ID provided.</div>;
@@ -13,7 +15,7 @@ export default function BuilderWrapper() {
     <BuilderShell 
       mode="edit" 
       workflowId={id} 
-      onBack={() => navigate('/workflows')} 
+      onBack={() => navigate(backTo)}
     />
   );
 }

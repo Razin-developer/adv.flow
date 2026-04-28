@@ -15,6 +15,7 @@ export interface AppSettings {
   developerMode: boolean;
   telemetryEnabled: boolean;
   syncOnOpen: boolean;
+  macrosEnabled: boolean;
   preferredBrowser: string;
   preferredEditor: string;
   aiProvider: "gemini" | "local";

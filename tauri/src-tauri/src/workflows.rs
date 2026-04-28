@@ -79,6 +79,7 @@ pub struct AppSettings {
     pub developer_mode: bool,
     pub telemetry_enabled: bool,
     pub sync_on_open: bool,
+    pub macros_enabled: bool,
     pub preferred_browser: String,
     pub preferred_editor: String,
     pub ai_provider: String,
@@ -108,6 +109,7 @@ impl Default for AppSettings {
             developer_mode: false,
             telemetry_enabled: false,
             sync_on_open: false,
+            macros_enabled: true,
             preferred_browser: "chrome".to_string(),
             preferred_editor: "vscode".to_string(),
             ai_provider: "gemini".to_string(),
@@ -127,6 +129,7 @@ pub struct AppState {
     pub workflows: Mutex<Vec<Workflow>>,
     pub settings: Mutex<AppSettings>,
     pub active_workflow_runs: Mutex<HashSet<String>>,
+    pub macro_shortcuts_initialized: Mutex<bool>,
     pub log_write_lock: Mutex<()>,
 }
 
@@ -261,6 +264,10 @@ fn validate_settings(settings: &mut AppSettings) {
     if settings.local_model_endpoint.trim().is_empty() {
         settings.local_model_endpoint = "http://127.0.0.1:1234/v1".to_string();
     }
+}
+
+pub fn macros_enabled(state: &AppState) -> bool {
+    state.settings.lock().unwrap().macros_enabled
 }
 
 fn active_app_name() -> String {
@@ -401,8 +408,14 @@ fn workflow_shortcut(workflow: &Workflow) -> Option<Shortcut> {
 }
 
 pub fn register_workflow_shortcuts(app: &AppHandle) -> Result<(), String> {
-    let _ = app.global_shortcut().unregister_all();
     let state = app.state::<AppState>();
+    if !state.settings.lock().unwrap().macros_enabled
+        || !*state.macro_shortcuts_initialized.lock().unwrap()
+    {
+        return Ok(());
+    }
+
+    let _ = app.global_shortcut().unregister_all();
     let workflows = state.workflows.lock().unwrap().clone();
     let mut registered = HashSet::new();
 
@@ -427,6 +440,9 @@ pub fn register_workflow_shortcuts(app: &AppHandle) -> Result<(), String> {
 
 pub fn handle_global_shortcut(app: &AppHandle, shortcut: &Shortcut) {
     let state = app.state::<AppState>();
+    if !state.settings.lock().unwrap().macros_enabled {
+        return;
+    }
     let active_app = active_app_name();
     let workflows = state.workflows.lock().unwrap().clone();
 
@@ -1280,6 +1296,7 @@ fn normalize_node(node: &mut Value, index: usize) {
                     | "macroMouseClick"
                     | "macroMoveMouse"
                     | "macroScroll"
+                    | "waitActiveApp"
                     | "delay"
             )
         })
@@ -2569,6 +2586,33 @@ fn macro_scroll_node(data: &Value) -> Result<String, String> {
     })
 }
 
+fn wait_active_app_node(data: &Value) -> Result<String, String> {
+    let target_app = data
+        .get("targetApp")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    if target_app.trim().is_empty() {
+        return Ok("No target app configured.".to_string());
+    }
+
+    let timeout_ms = data
+        .get("timeoutMs")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(5_000)
+        .min(60_000);
+    let started_at = Instant::now();
+    loop {
+        let active_app = active_app_name();
+        if app_matches_target(&active_app, target_app) {
+            return Ok(format!("Active app matched {target_app}."));
+        }
+        if started_at.elapsed() >= Duration::from_millis(timeout_ms) {
+            return Err(format!("Timed out waiting for active app: {target_app}"));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 #[instrument(skip(settings))]
 fn execute_node(node: &Value, settings: &AppSettings) -> Result<String, String> {
     let data = node.get("data").unwrap_or(node);
@@ -2585,6 +2629,7 @@ fn execute_node(node: &Value, settings: &AppSettings) -> Result<String, String> 
         "macroMouseClick" => macro_mouse_click_node(data),
         "macroMoveMouse" => macro_move_mouse_node(data),
         "macroScroll" => macro_scroll_node(data),
+        "waitActiveApp" => wait_active_app_node(data),
         "delay" => {
             let delay = data
                 .get("delay")
@@ -2753,7 +2798,11 @@ pub fn get_settings(state: State<AppState>) -> Result<AppSettings, String> {
 }
 
 #[tauri::command]
-pub fn save_settings(state: State<AppState>, settings: AppSettings) -> Result<AppSettings, String> {
+pub fn save_settings(
+    app: AppHandle,
+    state: State<AppState>,
+    settings: AppSettings,
+) -> Result<AppSettings, String> {
     let mut next_settings = settings;
     validate_settings(&mut next_settings);
 
@@ -2763,6 +2812,14 @@ pub fn save_settings(state: State<AppState>, settings: AppSettings) -> Result<Ap
     }
 
     configure_launch_on_startup(next_settings.launch_on_startup);
+    #[cfg(desktop)]
+    {
+        if next_settings.macros_enabled {
+            let _ = register_workflow_shortcuts(&app);
+        } else if *state.macro_shortcuts_initialized.lock().unwrap() {
+            let _ = app.global_shortcut().unregister_all();
+        }
+    }
     state.save_settings()?;
     Ok(next_settings)
 }
@@ -3452,6 +3509,7 @@ pub fn init_state(app_handle: &AppHandle) -> AppState {
         workflows: Mutex::new(workflows),
         settings: Mutex::new(settings),
         active_workflow_runs: Mutex::new(HashSet::new()),
+        macro_shortcuts_initialized: Mutex::new(false),
         log_write_lock: Mutex::new(()),
     }
 }
