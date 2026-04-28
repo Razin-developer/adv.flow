@@ -9,38 +9,44 @@ import DownloadModal from "@/components/DownloadModal";
 const githubUrl = "https://github.com/Razin-developer/adv.flow/";
 const buyMeACoffeeUrl = "https://www.buymeacoffee.com/";
 
-const osCards = [
-  {
-    title: "Windows",
-    icon: Monitor,
-    details: ["NSIS installer", "Setup .exe", "Desktop app"],
-    install: "Download the Windows build and run it. For Windows, users can simply run the installer.",
-    installUrl: "https://github.com/Razin-developer/adv.flow/releases/download/untagged-172ffb694775d30157dd/Adv.Flow_1.0.0_x64-setup.exe",
-  },
-  {
-    title: "Ubuntu",
-    icon: Download,
-    details: [".deb package", ".AppImage", "CLI companion"],
-    install: "Install the app, then add the CLI binary location to PATH if terminal access is needed.",
-    installUrl: "https://github.com/Razin-developer/adv.flow/releases/download/untagged-172ffb694775d30157dd/Adv.Flow_1.0.0_aarch64.dmg",
-  },
-  {
-    title: "macOS",
-    icon: Apple,
-    details: [".dmg installer", ".app bundle", "CLI companion"],
-    install: "Install from the DMG, then add the CLI location to PATH for command-line use.",
-    installUrl: "https://github.com/Razin-developer/adv.flow/releases/download/untagged-172ffb694775d30157dd/Adv.Flow_1.0.0_amd64.deb",
-  },
-];
-
-
 const releases = [
-  { name: "Adv.Flow_1.0.0_x64-setup.exe", os: "Windows", arch: "x64", type: "Installer", url: "https://github.com/Razin-developer/adv.flow/releases/download/untagged-172ffb694775d30157dd/Adv.Flow_1.0.0_x64-setup.exe" },
-  { name: "Adv.Flow_1.0.0_aarch64.dmg", os: "macOS", arch: "Apple Silicon", type: "DMG", url: "https://github.com/Razin-developer/adv.flow/releases/download/untagged-172ffb694775d30157dd/Adv.Flow_1.0.0_aarch64.dmg" },
-  { name: "Adv.Flow_aarch64.app.tar.gz", os: "macOS", arch: "Apple Silicon", type: "Tarball", url: "https://github.com/Razin-developer/adv.flow/releases/download/untagged-172ffb694775d30157dd/Adv.Flow_aarch64.app.tar.gz" },
-  { name: "Adv.Flow_1.0.0_amd64.deb", os: "Linux", arch: "x64", type: "Debian", url: "https://github.com/Razin-developer/adv.flow/releases/download/untagged-172ffb694775d30157dd/Adv.Flow_1.0.0_amd64.deb" },
-  { name: "Adv.Flow_1.0.0_amd64.AppImage", os: "Linux", arch: "x64", type: "AppImage", url: "https://github.com/Razin-developer/adv.flow/releases/download/untagged-172ffb694775d30157dd/Adv.Flow_1.0.0_amd64.AppImage" },
+  {
+    name: "advflow-windows.exe",
+    os: "Windows",
+    arch: "x64",
+    type: "Installer",
+    url: `${githubUrl}releases/download/v1.0.0/advflow-windows.exe`,
+  },
+  {
+    name: "advflow-macos.dmg",
+    os: "macOS",
+    arch: "Universal",
+    type: "DMG",
+    url: `${githubUrl}releases/download/v1.0.0/advflow-macos.dmg`,
+  },
+  {
+    name: "advflow-macos.tar.gz",
+    os: "macOS",
+    arch: "Universal",
+    type: "Tarball",
+    url: `${githubUrl}releases/download/v1.0.0/advflow-macos.app.tar.gz`,
+  },
+  {
+    name: "advflow-linux.deb",
+    os: "Linux",
+    arch: "x64",
+    type: "Debian",
+    url: `${githubUrl}releases/download/v1.0.0/advflow-linux.deb`,
+  },
+  {
+    name: "advflow-linux.AppImage",
+    os: "Linux",
+    arch: "x64",
+    type: "AppImage",
+    url: `${githubUrl}releases/download/v1.0.0/advflow-linux.AppImage`,
+  },
 ];
+
 function TerminalCommand({ command }: { command: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -64,6 +70,7 @@ export default function DownloadPage() {
   const [selectedRelease, setSelectedRelease] = useState<any>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [detectedRelease, setDetectedRelease] = useState<any>(null);
+  const [stars, setStars] = useState("Star");
 
   useEffect(() => {
     const ua = window.navigator.userAgent;
@@ -85,6 +92,36 @@ export default function DownloadPage() {
     if (match) setDetectedRelease(match);
   }, []);
 
+  useEffect(() => {
+    let active = true;
+
+    async function loadStars() {
+      try {
+        const response = await fetch("https://api.github.com/repos/Razin-developer/adv.flow", {
+          headers: { Accept: "application/vnd.github+json" },
+        });
+
+        if (!response.ok) return;
+
+        const data = (await response.json()) as { stargazers_count?: number };
+        const count = data.stargazers_count ?? 0;
+        const nextStars = count >= 1000 ? `${(count / 1000).toFixed(1)}k` : String(count);
+
+        if (active) {
+          setStars(nextStars);
+        }
+      } catch {
+        // Leave the fallback label in place.
+      }
+    }
+
+    loadStars();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const handleDownloadClick = (e: React.MouseEvent | React.TouchEvent, release: any) => {
     e.preventDefault();
     setSelectedRelease(release);
@@ -97,6 +134,9 @@ export default function DownloadPage() {
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         release={selectedRelease}
+        githubUrl={githubUrl}
+        buyMeACoffeeUrl={buyMeACoffeeUrl}
+        stars={stars}
       />
       <AnalyticsTracker pathname="/download" />
       <section className="">

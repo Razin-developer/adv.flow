@@ -6,6 +6,7 @@ import { BookOpen, Download, Github, Home, Menu, Moon, Search, Sun, X } from "lu
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { navigationItems } from "@/data/product-system";
 import { getGlobalResults, useProductStore } from "@/lib/product-store";
+import Image from "next/image";
 
 type ProductShellProps = {
   title: string;
@@ -37,7 +38,13 @@ export default function ProductShell({ title, eyebrow, description, children, as
     <aside className="product-sidebar">
       <div className="product-brand">
         <Link href="/" className="product-logo" aria-label="Advflow home">
-          <span>Af</span>
+          <Image
+            src="/advflow-logo.svg"
+            alt="Advflow logo"
+            width={42}
+            height={42}
+            className=""
+          />
         </Link>
         <div>
           <strong>Advflow</strong>

@@ -6,12 +6,14 @@ type DownloadLeadFormProps = {
   platform: string;
   releaseUrl: string;
   buttonLabel: string;
+  onSuccess?: () => void;
 };
 
 export default function DownloadLeadForm({
   platform,
   releaseUrl,
   buttonLabel,
+  onSuccess,
 }: DownloadLeadFormProps) {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
@@ -45,7 +47,9 @@ export default function DownloadLeadForm({
 
       setStatus("idle");
       setEmail("");
-      window.location.href = releaseUrl;
+      console.log("Downloading release:", releaseUrl);
+      window.open(releaseUrl, "_blank");
+      onSuccess?.();
     } catch {
       setStatus("error");
       setMessage("Could not save the email right now. Please try again.");

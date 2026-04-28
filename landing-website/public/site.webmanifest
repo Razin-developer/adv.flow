@@ -1,0 +1,21 @@
+{
+  "name": "Adv.Flow",
+  "short_name": "Adv.Flow",
+  "description": "Desktop automation workflows, macros, and CLI runs for local developer setups and repeatable tasks.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f8fb",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "/apple-touch-icon.svg",
+      "sizes": "180x180",
+      "type": "image/svg+xml"
+    }
+  ]
+}

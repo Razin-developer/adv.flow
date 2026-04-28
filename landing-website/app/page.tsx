@@ -1,7 +1,17 @@
+import type { Metadata } from "next";
 import AnalyticsTracker from "@/components/AnalyticsTracker";
 import LandingPage from "@/components/landing/LandingPage";
 
 const githubRepo = "Razin-developer/adv.flow";
+
+export const metadata: Metadata = {
+  title: "Desktop Automation Workflows",
+  description:
+    "Build local workflows, in-app automations, macros, and CLI runs with Adv.Flow on Windows, macOS, and Linux.",
+  alternates: {
+    canonical: "/",
+  },
+};
 
 async function getStarCount(): Promise<string> {
   try {
@@ -14,7 +24,12 @@ async function getStarCount(): Promise<string> {
       return "Star";
     }
 
-    const data = (await response.json()) as { stargazers_count?: number };
+    const data = (await response.json().catch(() => null)) as
+      | { stargazers_count?: number }
+      | null;
+    if (!data) {
+      return "Star";
+    }
     const count = data.stargazers_count ?? 0;
 
     if (count >= 1000) {

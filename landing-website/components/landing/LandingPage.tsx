@@ -25,6 +25,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import Image from "next/image";
 
 type LandingPageProps = {
   stars: string;
@@ -944,9 +945,13 @@ export default function LandingPage({ stars }: LandingPageProps) {
         <div className="mx-auto grid w-full max-w-[1200px] gap-10 px-4 py-10 sm:px-6 lg:grid-cols-[0.95fr_1.05fr] lg:px-8">
           <div>
             <div className="flex items-center gap-3">
-              <div className="grid h-11 w-11 place-items-center rounded-[16px] bg-[linear-gradient(135deg,#0f172a,#2563eb_60%,#67e8f9)] shadow-[0_16px_40px_rgba(37,99,235,0.26)]">
-                <Workflow className="h-5 w-5 text-white" />
-              </div>
+              <Image
+                src="/advflow-logo.svg"
+                alt="Adv.Flow logo"
+                width={32}
+                height={32}
+                className="h-12 w-12 p-1"
+              />
               <div>
                 <p className="text-lg font-semibold tracking-[-0.04em] text-slate-950">Adv.Flow</p>
                 <p className="text-sm text-slate-600">Desktop automation for modern developer workflows.</p>
