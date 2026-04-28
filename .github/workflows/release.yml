@@ -1,50 +1,41 @@
-name: Build and Release
+name: 'Build and Release'
 
 on:
   push:
     branches:
       - main
     tags:
-      - "v*"
+      - 'v*'
   workflow_dispatch:
 
 jobs:
-  build:
+  release:
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
         platform: [macos-latest, ubuntu-22.04, windows-latest]
 
     runs-on: ${{ matrix.platform }}
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: setup node
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
 
-      - name: Install Rust Stable
+      - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install Dependencies Ubuntu Only
+      - name: install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libxdo-dev \
-            libx11-dev \
-            libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libx11-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
-      - name: Install Frontend Dependencies
+      - name: install frontend dependencies
         run: npm install
         working-directory: tauri
 
@@ -52,8 +43,13 @@ jobs:
         shell: bash
         run: |
           cd tauri/src-tauri
+
           mkdir -p binaries
 
+          HOST_TRIPLE=$(rustc -vV | grep host | cut -d ' ' -f 2)
+          echo "Host triple: $HOST_TRIPLE"
+
+          # Create placeholder files first so Tauri build.rs does not fail
           if [[ "$RUNNER_OS" == "macOS" ]]; then
             touch binaries/advflow-cli-aarch64-apple-darwin
             touch binaries/advflow-cli-x86_64-apple-darwin
@@ -69,8 +65,10 @@ jobs:
             touch binaries/advflow-cli-x86_64-pc-windows-msvc.exe
           fi
 
+          # Now build actual CLI
           cargo build --release --bin advflow-cli
 
+          # Replace placeholder with real binary
           if [[ "$RUNNER_OS" == "macOS" ]]; then
             cp target/release/advflow-cli binaries/advflow-cli-aarch64-apple-darwin
             cp target/release/advflow-cli binaries/advflow-cli-x86_64-apple-darwin
@@ -86,116 +84,47 @@ jobs:
             cp target/release/advflow-cli.exe binaries/advflow-cli-x86_64-pc-windows-msvc.exe
           fi
 
-      - name: Build Tauri App
-        uses: tauri-apps/tauri-action@v0
+          echo "Final binaries:"
+          ls -la binaries
+
+      - uses: tauri-apps/tauri-action@v0
+
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          tagName: v__VERSION__
+          releaseName: 'AdvFlow v__VERSION__'
+          releaseBody: 'Automated release from GitHub Actions.'
+          releaseDraft: true
+          prerelease: false
           projectPath: tauri
-          includeRelease: false
+          includeRelease: true
 
-      - name: Build CLI Installer Windows Only
+      - name: Build CLI Installer (Windows only)
         if: matrix.platform == 'windows-latest'
         shell: pwsh
         run: |
           cd tauri/src-tauri/windows
-
           if (!(Test-Path "C:\Program Files (x86)\NSIS\makensis.exe")) {
             choco install nsis -y
           }
-
           & "C:\Program Files (x86)\NSIS\makensis.exe" cli-installer.nsi
           Move-Item AdvFlow-CLI-Setup.exe ../../../AdvFlow-CLI-Setup.exe
 
-      - name: Stage Release Assets
-        if: always()
+      - name: Upload Standalone CLI Artifacts
         shell: bash
         run: |
-          mkdir -p release-assets
+          BIN_EXT=""
+          if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then BIN_EXT=".exe"; fi
+          # The binary is built by tauri-action's beforeBuildCommand
+          cp tauri/src-tauri/target/release/advflow-cli${BIN_EXT} ./advflow-cli-${{ matrix.platform }}${BIN_EXT}
 
-          echo "Finding Tauri bundle files..."
-
-          find tauri/src-tauri/target/release/bundle -type f \( \
-            -name "*.dmg" -o \
-            -name "*.app.tar.gz" -o \
-            -name "*.deb" -o \
-            -name "*.rpm" -o \
-            -name "*.AppImage" -o \
-            -name "*.msi" -o \
-            -name "*.exe" -o \
-            -name "*.zip" -o \
-            -name "*.tar.gz" \
-          \) -exec cp {} release-assets/ \; 2>/dev/null || true
-
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            cp tauri/src-tauri/target/release/advflow-cli.exe release-assets/advflow-cli-windows.exe || true
-            cp AdvFlow-CLI-Setup.exe release-assets/ || true
-          fi
-
-          if [[ "$RUNNER_OS" == "Linux" ]]; then
-            cp tauri/src-tauri/target/release/advflow-cli release-assets/advflow-cli-linux || true
-          fi
-
-          if [[ "$RUNNER_OS" == "macOS" ]]; then
-            cp tauri/src-tauri/target/release/advflow-cli release-assets/advflow-cli-macos || true
-          fi
-
-          echo "Release assets:"
-          ls -lah release-assets || true
-
-      - name: Upload Build Artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: advflow-${{ matrix.platform }}
-          path: release-assets/**
-          if-no-files-found: ignore
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-
-    if: always()
-
-    permissions:
-      contents: write
-
-    steps:
-      - name: Download All Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: all-assets
-
-      - name: Prepare Final Assets
-        run: |
-          mkdir -p final-assets
-          find all-assets -type f -exec cp {} final-assets/ \;
-          echo "Final release assets:"
-          ls -lah final-assets
-
-      - name: Set Release Info
-        id: release_info
-        run: |
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            TAG="${GITHUB_REF_NAME}"
-            NAME="AdvFlow ${GITHUB_REF_NAME}"
-          else
-            TAG="build-${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}"
-            NAME="AdvFlow Build ${GITHUB_RUN_NUMBER}"
-          fi
-
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "name=$NAME" >> $GITHUB_OUTPUT
-
-      - name: Create One GitHub Release
+      - name: Upload Extra Assets to Release
         uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
-          tag_name: ${{ steps.release_info.outputs.tag }}
-          name: ${{ steps.release_info.outputs.name }}
-          body: "Automated AdvFlow release with macOS, Windows, and Linux builds."
-          draft: true
-          prerelease: false
-          files: final-assets/*
-          fail_on_unmatched_files: false
+          files: |
+            AdvFlow-CLI-Setup.exe
+            advflow-cli-*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
