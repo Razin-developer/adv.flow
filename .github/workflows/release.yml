@@ -2,10 +2,8 @@ name: Build and Release
 
 on:
   push:
-    branches:
-      - main
     tags:
-      - "v*"
+      - 'v*'
   workflow_dispatch:
 
 jobs:
@@ -52,7 +50,6 @@ jobs:
         shell: bash
         run: |
           cd tauri/src-tauri
-
           mkdir -p binaries
 
           if [[ "$RUNNER_OS" == "macOS" ]]; then
@@ -87,9 +84,6 @@ jobs:
             cp target/release/advflow-cli.exe binaries/advflow-cli-x86_64-pc-windows-msvc.exe
           fi
 
-          echo "Final sidecar binaries:"
-          ls -la binaries
-
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
         env:
@@ -109,10 +103,10 @@ jobs:
           }
 
           & "C:\Program Files (x86)\NSIS\makensis.exe" cli-installer.nsi
-
           Move-Item AdvFlow-CLI-Setup.exe ../../../AdvFlow-CLI-Setup.exe
 
       - name: Stage Release Assets
+        if: always()
         shell: bash
         run: |
           mkdir -p release-assets
@@ -122,35 +116,36 @@ jobs:
           fi
 
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            cp tauri/src-tauri/target/release/advflow-cli.exe release-assets/advflow-cli-windows.exe
+            cp tauri/src-tauri/target/release/advflow-cli.exe release-assets/advflow-cli-windows.exe || true
             cp AdvFlow-CLI-Setup.exe release-assets/ || true
           fi
 
           if [[ "$RUNNER_OS" == "Linux" ]]; then
-            cp tauri/src-tauri/target/release/advflow-cli release-assets/advflow-cli-linux
+            cp tauri/src-tauri/target/release/advflow-cli release-assets/advflow-cli-linux || true
           fi
 
           if [[ "$RUNNER_OS" == "macOS" ]]; then
-            cp tauri/src-tauri/target/release/advflow-cli release-assets/advflow-cli-macos
+            cp tauri/src-tauri/target/release/advflow-cli release-assets/advflow-cli-macos || true
           fi
 
-          echo "Release assets:"
-          ls -la release-assets
+          ls -la release-assets || true
 
       - name: Upload Build Artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: advflow-${{ matrix.platform }}
           path: release-assets/**
+          if-no-files-found: ignore
 
   release:
     needs: build
     runs-on: ubuntu-latest
 
+    if: always() && (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch')
+
     permissions:
       contents: write
-
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Download All Artifacts
@@ -162,17 +157,31 @@ jobs:
         run: |
           mkdir -p final-assets
           find all-assets -type f -exec cp {} final-assets/ \;
-          echo "Final release assets:"
           ls -la final-assets
+
+      - name: Set Release Info
+        id: release_info
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+            NAME="AdvFlow ${GITHUB_REF_NAME}"
+          else
+            TAG="manual-build-${GITHUB_RUN_NUMBER}"
+            NAME="AdvFlow Manual Build ${GITHUB_RUN_NUMBER}"
+          fi
+
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "name=$NAME" >> $GITHUB_OUTPUT
 
       - name: Create One GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'manual-build' }}
-          name: ${{ startsWith(github.ref, 'refs/tags/') && format('AdvFlow {0}', github.ref_name) || 'AdvFlow Manual Build' }}
-          body: "Automated AdvFlow release with macOS, Windows, and Linux builds."
+          tag_name: ${{ steps.release_info.outputs.tag }}
+          name: ${{ steps.release_info.outputs.name }}
+          body: 'Automated AdvFlow release with macOS, Windows, and Linux builds.'
           draft: true
           prerelease: false
           files: final-assets/*
+          fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
