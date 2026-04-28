@@ -14,5 +14,9 @@ export default function DownloadLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  return children;
+  return (
+    <div className="download-page-layout">
+      {children}
+    </div>
+  )
 }

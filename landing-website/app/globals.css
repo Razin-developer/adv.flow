@@ -42,6 +42,7 @@
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
   }
 
   a {
@@ -207,6 +208,7 @@
   padding: var(--space-5) 0 var(--space-7);
   display: grid;
   gap: var(--space-5);
+  overflow-x: hidden;
 }
 
 .desktop-only {
@@ -215,6 +217,11 @@
 
 .mobile-only {
   display: none;
+}
+
+.download-page-layout {
+  width: 100vw;
+  overflow-x: hidden;
 }
 
 .download-card,
@@ -247,8 +254,13 @@
   font-size: 14px;
 }
 
+.first-fold {
+  max-width: 92vw;
+}
+
 .releases-section {
   display: grid;
+  max-width: 92vw;
   gap: var(--space-4);
 }
 .section-head h2 {
@@ -563,6 +575,14 @@
   flex: 0 0 auto;
 }
 
+.list-stack {
+  max-width: 85vw;
+}
+
+.list-row {
+  max-width: 85vw;
+}
+
 .pricing-list,
 .list-stack {
   display: grid;
@@ -578,6 +598,10 @@
   color: var(--muted-strong);
   font-size: 13px;
   line-height: 1.55;
+}
+
+.list-raw-content {
+  max-width: 68vw;
 }
 
 .pricing-item svg,
@@ -598,6 +622,7 @@
   );
   box-shadow: var(--shadow-sm);
   backdrop-filter: blur(18px);
+  max-width: 92vw;
 }
 
 .feature-split,
@@ -610,6 +635,10 @@
 .feature-split {
   grid-template-columns: 1.05fr 0.95fr;
   align-items: center;
+}
+
+.panel-copy {
+  max-width: 88vw;
 }
 
 .panel-copy h2,
@@ -633,6 +662,7 @@
 
 .panel-visual {
   display: grid;
+  max-width: 80vw;
 }
 
 .support-status {
@@ -1446,6 +1476,7 @@
   font-size: 11px;
   overflow-x: auto;
   white-space: nowrap;
+  max-width: 100%;
 }
 
 .terminal-copy-button {

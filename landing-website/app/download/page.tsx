@@ -139,7 +139,7 @@ export default function DownloadPage() {
         stars={stars}
       />
       <AnalyticsTracker pathname="/download" />
-      <section className="">
+      <section className="first-fold">
         <header className="marketing-topbar">
           <div className="window-dots" aria-hidden="true">
             <span />
@@ -279,14 +279,14 @@ export default function DownloadPage() {
               <span className="check-badge">
                 <Check size={14} />
               </span>
-              <div>
+              <div className="list-raw-content">
                 Ubuntu: install the app, then add the CLI to PATH if needed.
                 <TerminalCommand command="sudo apt install ./advflow-linux-x64.deb" />
               </div>
             </div>
             <div className="list-row macos-note">
               <span className="check-badge"><Check size={14} /></span>
-              <div>
+              <div className="list-raw-content">
                 macOS: install from DMG. If it fails to open or for CLI access, run:
                 <TerminalCommand command="sudo ln -s /Applications/Adv.Flow.app/Contents/MacOS/advflow-cli /usr/local/bin/advflow" />
               </div>
