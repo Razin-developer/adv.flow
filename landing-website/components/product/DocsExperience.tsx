@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { BookOpen, Copy, Search } from "lucide-react";
+import { BookOpen, CheckCircle2, Copy, Search } from "lucide-react";
 import ProductShell from "@/components/product/ProductShell";
 import { docs, features } from "@/data/product-system";
 import { useProductStore } from "@/lib/product-store";
@@ -11,6 +11,9 @@ const sections = ["Getting Started", "Workflows", "Macros", "Commands", "Integra
 export default function DocsExperience() {
   const docsQuery = useProductStore((state) => state.docsQuery);
   const setDocsQuery = useProductStore((state) => state.setDocsQuery);
+  const copySnippet = async (snippet: string) => {
+    await navigator.clipboard?.writeText(snippet);
+  };
   const filteredDocs = docs.filter((doc) => {
     if (!docsQuery.trim()) return true;
     const haystack = `${doc.title} ${doc.description} ${doc.section} ${doc.steps.join(" ")} ${doc.snippet ?? ""}`.toLowerCase();
@@ -20,8 +23,8 @@ export default function DocsExperience() {
   return (
     <ProductShell
       eyebrow="Docs"
-      title="Clear guides for every feature, command, macro, and integration."
-      description="A Notion/Vercel-style documentation system with search, snippets, examples, step-by-step guides, and related feature links."
+      title="Clear, readable guides for building reliable flows."
+      description="Searchable documentation with focused articles, examples, step-by-step guidance, copyable snippets, and related feature links."
       aside={
         <div className="docs-nav sticky">
           <strong>Docs navigation</strong>
@@ -40,9 +43,12 @@ export default function DocsExperience() {
         </div>
       }
     >
-      <div className="docs-search">
-        <Search size={17} />
-        <input value={docsQuery} onChange={(event) => setDocsQuery(event.target.value)} placeholder="Search docs..." />
+      <div className="docs-tools">
+        <div className="docs-search">
+          <Search size={17} />
+          <input value={docsQuery} onChange={(event) => setDocsQuery(event.target.value)} placeholder="Search docs..." />
+        </div>
+        <div className="docs-result-count">{filteredDocs.length} articles</div>
       </div>
 
       <section className="docs-stack">
@@ -59,7 +65,10 @@ export default function DocsExperience() {
             <div className="step-list">
               {doc.steps.map((step, index) => (
                 <div className="step-row" key={step}>
-                  <span>{index + 1}</span>
+                  <span>
+                    <CheckCircle2 size={16} />
+                    {index + 1}
+                  </span>
                   <p>{step}</p>
                 </div>
               ))}
@@ -68,7 +77,7 @@ export default function DocsExperience() {
               <div className="code-panel">
                 <div>
                   <span>Example</span>
-                  <button type="button" aria-label="Copy snippet">
+                  <button type="button" aria-label="Copy snippet" onClick={() => void copySnippet(doc.snippet ?? "")}>
                     <Copy size={15} />
                   </button>
                 </div>
@@ -96,4 +105,3 @@ export default function DocsExperience() {
     </ProductShell>
   );
 }
-

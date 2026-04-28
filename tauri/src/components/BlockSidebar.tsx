@@ -6,6 +6,11 @@ const DESKTOP_BLOCKS = [
   { type: 'openApp', name: 'Open App', description: 'Launch a configured development app.' },
   { type: 'runCommand', name: 'Run Command', description: 'Run a terminal command in the background or a new window.' },
   { type: 'openBrowser', name: 'Open Browser', description: 'Open a URL in the selected browser.' },
+  { type: 'macroKeyCombo', name: 'Key Combo', description: 'Press editable keyboard shortcuts in the active app.' },
+  { type: 'macroTypeText', name: 'Type Text', description: 'Type configured text once into the focused control.' },
+  { type: 'macroMouseClick', name: 'Mouse Click', description: 'Click the current mouse position.' },
+  { type: 'macroMoveMouse', name: 'Move Mouse', description: 'Move the pointer by absolute or relative coordinates.' },
+  { type: 'macroScroll', name: 'Scroll', description: 'Scroll vertically or horizontally.' },
   { type: 'delay', name: 'Delay', description: 'Pause or wait for a URL to respond.' },
 ] as const;
 

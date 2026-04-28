@@ -171,6 +171,7 @@ export default function WorkflowsPage({
     });
     if (!selected || typeof selected !== "string") return;
     const count = await invoke<number>("import_workflows", { path: selected });
+    await invoke("refresh_macro_shortcuts");
     await onImportComplete();
     await dialog.success("Import complete", `Imported ${count} workflow${count === 1 ? "" : "s"}.`);
   }
@@ -183,6 +184,7 @@ export default function WorkflowsPage({
     if (!selected || typeof selected !== "string") return;
     try {
       const workflow = await invoke<Workflow>("import_workflow", { path: selected });
+      await invoke("refresh_macro_shortcuts");
       await onImportComplete();
       await dialog.success("Workflow imported", `${workflow.name} was added to your library.`);
       onOpenWorkflow(workflow.id || workflow._id || "");

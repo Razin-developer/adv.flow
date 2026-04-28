@@ -18,6 +18,21 @@ pub fn run() {
         .setup(|app| {
             let state = workflows::init_state(app.handle());
             app.manage(state);
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_global_shortcut::ShortcutState;
+
+                app.handle().plugin(
+                    tauri_plugin_global_shortcut::Builder::new()
+                        .with_handler(|app, shortcut, event| {
+                            if event.state() == ShortcutState::Pressed {
+                                workflows::handle_global_shortcut(app, shortcut);
+                            }
+                        })
+                        .build(),
+                )?;
+                workflows::register_workflow_shortcuts(app.handle())?;
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -43,7 +58,8 @@ pub fn run() {
             workflows::generate_workflow_from_prompt,
             workflows::generate_workflow_from_folder,
             workflows::suggest_node_update,
-            workflows::list_local_models
+            workflows::list_local_models,
+            workflows::refresh_macro_shortcuts
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

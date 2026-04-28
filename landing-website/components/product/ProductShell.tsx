@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, Moon, Search, Sun, X } from "lucide-react";
+import { BookOpen, Download, Github, Home, Menu, Moon, Search, Sun, X } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { navigationItems, quickActions } from "@/data/product-system";
+import { navigationItems } from "@/data/product-system";
 import { getGlobalResults, useProductStore } from "@/lib/product-store";
 
 type ProductShellProps = {
@@ -30,6 +30,9 @@ export default function ProductShell({ title, eyebrow, description, children, as
     document.documentElement.dataset.productTheme = theme;
   }, [theme]);
 
+  const primaryNav = navigationItems.slice(0, 3);
+  const guideNav = navigationItems.slice(3);
+
   const sidebar = (
     <aside className="product-sidebar">
       <div className="product-brand">
@@ -43,33 +46,59 @@ export default function ProductShell({ title, eyebrow, description, children, as
       </div>
 
       <nav className="product-nav" aria-label="Product sections">
-        {navigationItems.map((item) => {
-          const Icon = item.icon;
-          const active = currentPath === item.href || currentPath.startsWith(item.href.split("#")[0]);
-          return (
-            <Link className={active ? "active" : ""} href={item.href} key={item.label} onClick={() => setOpen(false)}>
-              <Icon size={17} />
-              <span>{item.label}</span>
-            </Link>
-          );
-        })}
+        <div className="product-nav-group">
+          <span>Product</span>
+          {primaryNav.map((item) => {
+            const Icon = item.icon;
+            const active = currentPath === item.href;
+            return (
+              <Link className={active ? "active" : ""} href={item.href} key={item.label} onClick={() => setOpen(false)}>
+                <Icon size={17} />
+                <span>{item.label}</span>
+              </Link>
+            );
+          })}
+        </div>
+
+        <div className="product-nav-group">
+          <span>Guides</span>
+          {guideNav.map((item) => {
+            const Icon = item.icon;
+            const hrefBase = item.href.split("#")[0];
+            const active = currentPath === item.href || (currentPath === hrefBase && !item.href.includes("#"));
+            return (
+              <Link className={active ? "active" : ""} href={item.href} key={item.label} onClick={() => setOpen(false)}>
+                <Icon size={17} />
+                <span>{item.label}</span>
+              </Link>
+            );
+          })}
+        </div>
       </nav>
 
-      <div className="quick-action-grid">
-        {quickActions.slice(0, 4).map((action) => {
-          const Icon = action.icon;
-          return (
-            <button type="button" key={action.label} aria-label={action.label}>
-              <Icon size={16} />
-            </button>
-          );
-        })}
+      <div className="product-sidebar-actions">
+        <Link href="/" onClick={() => setOpen(false)}>
+          <Home size={16} />
+          Home
+        </Link>
+        <Link href="/download" onClick={() => setOpen(false)}>
+          <Download size={16} />
+          Download
+        </Link>
+        <a href="https://github.com/Razin-developer/adv.flow/" target="_blank" rel="noreferrer">
+          <Github size={16} />
+          GitHub
+        </a>
       </div>
 
       <div className="product-sidebar-card">
-        <span>Community pulse</span>
-        <strong>548</strong>
-        <small>votes across workflow shares this week</small>
+        <span>Start here</span>
+        <strong>4 min</strong>
+        <small>Read the getting started guide, then build your first workflow.</small>
+        <Link href="/docs#getting-started" onClick={() => setOpen(false)}>
+          <BookOpen size={15} />
+          Open guide
+        </Link>
       </div>
     </aside>
   );

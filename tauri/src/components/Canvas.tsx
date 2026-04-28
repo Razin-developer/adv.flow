@@ -42,6 +42,16 @@ function defaultNodeData(type: string) {
       return { type, id: '', label: 'Run Command', command: '', workingDirectory: '', terminalType: 'background', shellType: getDefaultShell() };
     case 'openBrowser':
       return { type, id: '', label: 'Open Browser', url: 'http://localhost:3000', browser: 'system', waitMode: 'delay', delay: 0 };
+    case 'macroKeyCombo':
+      return { type, id: '', label: 'Key Combo', combo: 'Alt+Left' };
+    case 'macroTypeText':
+      return { type, id: '', label: 'Type Text', text: 'Hello from adv.flow macro' };
+    case 'macroMouseClick':
+      return { type, id: '', label: 'Mouse Click', button: 'left' };
+    case 'macroMoveMouse':
+      return { type, id: '', label: 'Move Mouse', x: 0, y: 0, coordinate: 'absolute' };
+    case 'macroScroll':
+      return { type, id: '', label: 'Scroll', amount: 3, axis: 'vertical' };
     case 'delay':
       return { type, id: '', label: 'Delay', delay: 1000, waitUrl: '' };
     default:

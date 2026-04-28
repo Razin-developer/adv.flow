@@ -13,6 +13,8 @@ const EMPTY_WORKFLOW: Workflow = {
   name: 'Untitled workflow',
   description: '',
   kind: 'desktop',
+  shortcut: '',
+  targetApp: '',
   tags: [],
   favorite: false,
   nodes: [],
@@ -26,6 +28,8 @@ type BuilderSnapshot = {
   name: string;
   description: string;
   kind: WorkflowKind;
+  shortcut: string;
+  targetApp: string;
   tags: string[];
   favorite: boolean;
   nodes: Node[];
@@ -91,6 +95,8 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
   const [tagsInput, setTagsInput] = useState('');
   const [favorite, setFavorite] = useState(false);
   const [kind, setKind] = useState<WorkflowKind>('desktop');
+  const [shortcut, setShortcut] = useState('');
+  const [targetApp, setTargetApp] = useState('');
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(workflowId ?? null);
@@ -105,6 +111,8 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
       name: EMPTY_WORKFLOW.name,
       description: EMPTY_WORKFLOW.description,
       kind: 'desktop',
+      shortcut: '',
+      targetApp: '',
       tags: [],
     favorite: false,
     nodes: [],
@@ -117,12 +125,14 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
       name,
       description,
       kind,
+      shortcut,
+      targetApp,
       tags: tagsInput.split(',').map((tag) => tag.trim()).filter(Boolean),
       favorite,
       nodes,
       edges,
     };
-  }, [currentId, name, description, kind, tagsInput, favorite, nodes, edges]);
+  }, [currentId, name, description, kind, shortcut, targetApp, tagsInput, favorite, nodes, edges]);
 
   useEffect(() => {
     let mounted = true;
@@ -155,6 +165,8 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
         setName(workflow.name || EMPTY_WORKFLOW.name);
         setDescription(workflow.description || '');
         setKind((workflow.kind as WorkflowKind) || 'desktop');
+        setShortcut(workflow.shortcut || '');
+        setTargetApp(workflow.targetApp || '');
         setTagsInput((workflow.tags || []).join(', '));
         setFavorite(Boolean(workflow.favorite));
         setNodes(nextNodes);
@@ -165,6 +177,8 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
           name: workflow.name || EMPTY_WORKFLOW.name,
           description: workflow.description || '',
           kind: (workflow.kind as WorkflowKind) || 'desktop',
+          shortcut: workflow.shortcut || '',
+          targetApp: workflow.targetApp || '',
           tags: workflow.tags || [],
           favorite: Boolean(workflow.favorite),
           nodes: nextNodes,
@@ -195,6 +209,8 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
       name: snapshot.name.trim() || EMPTY_WORKFLOW.name,
       description: snapshot.description,
       kind: snapshot.kind,
+      shortcut: snapshot.shortcut,
+      targetApp: snapshot.targetApp,
       tags: snapshot.tags,
       favorite: snapshot.favorite,
       nodes: snapshot.nodes.map(fromReactFlowNode),
@@ -219,6 +235,7 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
         const nextId = saved.id || saved._id || null;
         setCurrentId(nextId);
         latestRef.current.workflowId = nextId;
+        void invoke('refresh_macro_shortcuts').catch(() => {});
         return nextId;
       })
       .catch((error: Error) => {
@@ -248,7 +265,7 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [autoSaveDelay, name, description, kind, tagsInput, favorite, nodes, edges]);
+  }, [autoSaveDelay, name, description, kind, shortcut, targetApp, tagsInput, favorite, nodes, edges]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -284,6 +301,20 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
             onChange={(event) => setDescription(event.target.value)}
             placeholder="Describe what this workflow does"
           />
+          <div className="builder-trigger-row">
+            <input
+              className="builder-shortcut"
+              value={shortcut}
+              onChange={(event) => setShortcut(event.target.value)}
+              placeholder="Shortcut, e.g. Shift+Minus"
+            />
+            <input
+              className="builder-target-app"
+              value={targetApp}
+              onChange={(event) => setTargetApp(event.target.value)}
+              placeholder="Target app, blank for global"
+            />
+          </div>
         </div>
 
         <div className="builder-actions">
@@ -321,6 +352,8 @@ export default function BuilderShell({ mode, workflowId, onBack }: BuilderShellP
       <div className="builder-statusbar">
         <span>{currentId ? `Workflow ID: ${currentId}` : 'Unsaved workflow'}</span>
         <span>Desktop workflow</span>
+        <span>{shortcut.trim() ? `Shortcut: ${shortcut}` : 'No shortcut'}</span>
+        <span>{targetApp.trim() ? `Target: ${targetApp}` : 'Global target'}</span>
         <span>{saving ? 'Saving...' : 'All changes synced'}</span>
         {saveError ? <span className="status-error">{saveError}</span> : null}
       </div>

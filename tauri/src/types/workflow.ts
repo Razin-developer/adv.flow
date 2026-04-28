@@ -2,6 +2,11 @@ export type BlockType =
   | 'openApp'
   | 'runCommand'
   | 'openBrowser'
+  | 'macroKeyCombo'
+  | 'macroTypeText'
+  | 'macroMouseClick'
+  | 'macroMoveMouse'
+  | 'macroScroll'
   | 'delay';
 export type Browser = 'system' | 'chrome' | 'edge' | 'brave' | 'firefox' | 'safari' | 'comet';
 export type TerminalMode = 'background' | 'newWindow';
@@ -11,12 +16,22 @@ export type WorkflowKind = 'desktop';
 export interface OpenAppConfig    { type: 'openApp';     appId: string; appName: string; command: string; args: string[]; appPath?: string; source?: string; folderPath: string; label: string; }
 export interface RunCommandConfig { type: 'runCommand';  command: string; workingDirectory: string; terminalType: TerminalMode; shellType?: string; label: string; }
 export interface OpenBrowserConfig{ type: 'openBrowser'; url: string; browser: Browser; waitMode: 'delay' | 'waitForServer'; delay: number; label: string; }
+export interface MacroKeyComboConfig { type: 'macroKeyCombo'; combo: string; label: string; }
+export interface MacroTypeTextConfig { type: 'macroTypeText'; text: string; label: string; }
+export interface MacroMouseClickConfig { type: 'macroMouseClick'; button: 'left' | 'middle' | 'right'; label: string; }
+export interface MacroMoveMouseConfig { type: 'macroMoveMouse'; x: number; y: number; coordinate: 'absolute' | 'relative'; label: string; }
+export interface MacroScrollConfig { type: 'macroScroll'; amount: number; axis: 'vertical' | 'horizontal'; label: string; }
 export interface DelayConfig      { type: 'delay';       delay: number; waitUrl?: string; label: string; }
 
 export type BlockConfig =
   | OpenAppConfig
   | RunCommandConfig
   | OpenBrowserConfig
+  | MacroKeyComboConfig
+  | MacroTypeTextConfig
+  | MacroMouseClickConfig
+  | MacroMoveMouseConfig
+  | MacroScrollConfig
   | DelayConfig;
 
 export interface InstalledApp {
@@ -43,6 +58,8 @@ export interface Workflow {
   _id?: string; id?: string;
   name: string; description: string;
   kind?: WorkflowKind;
+  shortcut?: string;
+  targetApp?: string;
   tags: string[]; favorite: boolean;
   nodes: WorkflowNode[]; edges: WorkflowEdge[];
   createdAt: string; updatedAt: string;

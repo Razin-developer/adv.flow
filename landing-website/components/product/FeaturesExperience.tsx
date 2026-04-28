@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, CheckCircle2, PlayCircle } from "lucide-react";
+import { ArrowRight, CheckCircle2, PlayCircle, Sparkles, Workflow, Zap } from "lucide-react";
 import ProductShell from "@/components/product/ProductShell";
 import { docs, features } from "@/data/product-system";
 
@@ -9,8 +9,8 @@ export default function FeaturesExperience() {
   return (
     <ProductShell
       eyebrow="Features"
-      title="Every Advflow capability, presented as a connected automation system."
-      description="Showcase workflows, macros, in-app triggers, CLI integrations, AI generation, browser launches, and command execution with polished previews and direct docs paths."
+      title="Every Advflow capability in one connected system."
+      description="Explore the building blocks behind desktop workflows, macros, app-aware triggers, CLI commands, AI generation, browser launches, and safe local execution."
       aside={
         <div className="aside-panel sticky">
           <strong>Capability map</strong>
@@ -22,6 +22,21 @@ export default function FeaturesExperience() {
         </div>
       }
     >
+      <section className="feature-overview">
+        {[
+          { label: "Core blocks", value: "7", body: "Workflows, macros, commands, browser actions, AI generation, app triggers, and CLI.", icon: Workflow },
+          { label: "Editable previews", value: "28", body: "Each capability shows real steps instead of abstract marketing copy.", icon: Sparkles },
+          { label: "Docs linked", value: "100%", body: "Every feature points to the guides that explain how to use it safely.", icon: Zap },
+        ].map((item) => (
+          <article key={item.label}>
+            <item.icon size={18} />
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+            <p>{item.body}</p>
+          </article>
+        ))}
+      </section>
+
       <section className="feature-grid">
         {features.map((feature) => {
           const Icon = feature.icon;
@@ -66,10 +81,10 @@ export default function FeaturesExperience() {
       <section className="integration-band">
         <div>
           <span>Connected system</span>
-          <h2>Community discussions, feature cards, and docs all reference the same capability graph.</h2>
+          <h2>Community, features, and docs now feel like one product surface.</h2>
           <p>
-            Feature pages link directly to docs. Docs point back to related capabilities. Community posts can reference both,
-            making support and product education feel like one surface.
+            Feature pages link directly to docs. Docs point back to related capabilities. Community posts can reference
+            both, so users can move from idea to guide to implementation without losing context.
           </p>
         </div>
         <div className="system-map">
@@ -81,4 +96,3 @@ export default function FeaturesExperience() {
     </ProductShell>
   );
 }
-

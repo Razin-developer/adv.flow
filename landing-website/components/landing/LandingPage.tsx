@@ -3,7 +3,10 @@
 import Link from "next/link";
 import {
   ArrowRight,
+  BookOpen,
   Check,
+  CircleHelp,
+  ClipboardList,
   Coffee,
   Command,
   Download,
@@ -11,7 +14,11 @@ import {
   GitBranch,
   Github,
   Layers3,
+  MousePointerClick,
   Monitor,
+  Play,
+  Rocket,
+  ShieldCheck,
   Sparkles,
   TerminalSquare,
   Workflow,
@@ -75,15 +82,93 @@ const featureSections = [
 const useCases = [
   {
     title: "Developers",
-    body: "Open the editor, boot services, restore tabs, and get back into flow in one move.",
+    body: "Open the editor, boot services, restore tabs, and get back into flow without rebuilding the same setup every morning.",
   },
   {
     title: "Startups",
-    body: "Turn team setup into a repeatable system so onboarding feels clean and consistent.",
+    body: "Share a clean project startup routine so new teammates know exactly what to run and what should open.",
   },
   {
     title: "Automation nerds",
-    body: "Treat your local routines like a product with structure, polish, and room to tinker.",
+    body: "Turn keyboard shortcuts, app launches, browser tabs, and shell commands into one visible routine you can improve over time.",
+  },
+];
+
+const productBasics = [
+  {
+    title: "What it is",
+    body: "Adv.Flow is a desktop app for building visual automation flows. A flow can open apps, run commands, launch browser pages, wait for services, and chain steps in the order you choose.",
+    icon: Workflow,
+  },
+  {
+    title: "Who it helps",
+    body: "It is for developers, makers, and small teams who repeat the same local setup: start servers, open folders, restore docs, run checks, and prepare a workspace.",
+    icon: Monitor,
+  },
+  {
+    title: "Why it feels safer",
+    body: "Every step stays visible and editable. You can inspect what runs, change commands, reorder nodes, and keep your automation local.",
+    icon: ShieldCheck,
+  },
+];
+
+const gettingStartedSteps = [
+  {
+    title: "Download the desktop app",
+    body: "Install Adv.Flow, open it, and create a workspace for your project or daily routine.",
+    icon: Download,
+  },
+  {
+    title: "Create or generate a flow",
+    body: "Start from a blank canvas, scan a project folder, or draft a workflow from the commands you already run.",
+    icon: Sparkles,
+  },
+  {
+    title: "Add useful steps",
+    body: "Combine app launch, command, browser, delay, macro, and AI-assisted blocks into one repeatable sequence.",
+    icon: ClipboardList,
+  },
+  {
+    title: "Run, refine, and reuse",
+    body: "Run the flow, check each result, adjust anything that needs polish, then make it your one-click startup.",
+    icon: Play,
+  },
+];
+
+const workflowRecipes = [
+  {
+    title: "Full-stack project start",
+    body: "Open VS Code, start the API, start the frontend, launch localhost, and open your task board.",
+    steps: ["Open editor", "Run backend", "Run frontend", "Open browser"],
+  },
+  {
+    title: "Content creation setup",
+    body: "Open notes, browser research, assets folder, design app, and a writing timer in the same order every time.",
+    steps: ["Open notes", "Open assets", "Launch browser", "Start timer"],
+  },
+  {
+    title: "Release checklist",
+    body: "Run checks, open release notes, launch GitHub, export build folders, and keep the routine consistent.",
+    steps: ["Run tests", "Open changelog", "Open GitHub", "Package build"],
+  },
+];
+
+const faqItems = [
+  {
+    question: "Do I need to code to use Adv.Flow?",
+    answer: "No. Most flows can be built visually. Developers can still add commands and advanced steps when they want more control.",
+  },
+  {
+    question: "Can I see what an automation will do?",
+    answer: "Yes. The point of Adv.Flow is visible automation: each app launch, command, browser action, delay, and macro stays editable.",
+  },
+  {
+    question: "Is it only for software projects?",
+    answer: "No. It is strongest for developer workflows, but it also works well for any repeated desktop routine that mixes apps, tabs, commands, and files.",
+  },
+  {
+    question: "Why should I use this instead of a script?",
+    answer: "Scripts are great, but visual flows are easier to inspect, share, reorder, and tune when your routine includes apps, browser pages, waits, and manual context.",
   },
 ];
 
@@ -209,10 +294,15 @@ function MarketingHeader({ stars }: { stars: string }) {
         <span>Adv.Flow</span>
       </div>
       <nav className="marketing-nav">
+        <a href="#what-is-it">What it is</a>
         <a href="#features">Features</a>
-        <a href="#workflow">How it works</a>
-        <a href="#pricing">Pricing</a>
+        <a href="#guide">How to use</a>
+        <a href="#examples">Examples</a>
         <Link href="/download">Download</Link>
+        {/* <a href="#faq">FAQ</a> */}
+        {/* <a href="/docs">How to use</a> */}
+        {/* <a href="/features">Features</a> */}
+        {/* <a href="#pricing">Pricing</a> */}
       </nav>
       <div className="marketing-actions">
         <a className="button-secondary nav-button" href={githubUrl} target="_blank" rel="noreferrer">
@@ -267,11 +357,11 @@ export default function LandingPage({ stars }: LandingPageProps) {
               Open-source desktop automation
             </div>
             <h1 className="mx-auto mt-6 max-w-4xl text-[clamp(2.6rem,5vw,5rem)] font-semibold leading-[1.02] tracking-[-0.08em] text-slate-950">
-              Automate the boring parts of your local setup
+              Start every project with one clear flow
             </h1>
             <p className="mx-auto mt-7 max-w-2xl text-[15px] leading-7 text-slate-600 sm:text-[17px]">
-              Adv.Flow turns daily project setup, app launches, and shell commands into a visual flow you can run on
-              demand, open source, desktop-first, and yours to fork.
+              Adv.Flow helps you turn repeated desktop work into a visual, repeatable routine: open apps, run commands,
+              launch browser tabs, wait for services, and get your workspace ready without rebuilding it by hand.
             </p>
 
             <div className="hero-cta-row mt-10 flex flex-wrap items-center justify-center gap-3">
@@ -291,6 +381,10 @@ export default function LandingPage({ stars }: LandingPageProps) {
                 <Coffee className="h-4 w-4" />
                 Buy me a coffee
               </a>
+              <SecondaryButton href="#guide">
+                <BookOpen className="h-4 w-4" />
+                See how it works
+              </SecondaryButton>
             </div>
 
             <div className="hero-trust-row mt-10 flex flex-wrap items-center justify-center gap-3">
@@ -305,6 +399,10 @@ export default function LandingPage({ stars }: LandingPageProps) {
               <div className="trust-pill">
                 <Monitor className="h-4 w-4 text-sky-500" />
                 <span>Desktop + CLI</span>
+              </div>
+              <div className="trust-pill">
+                <MousePointerClick className="h-4 w-4 text-violet-500" />
+                <span>Visual builder</span>
               </div>
             </div>
 
@@ -379,24 +477,27 @@ export default function LandingPage({ stars }: LandingPageProps) {
         </div>
       </section>
 
-      <section className="section-shell pt-0">
+      <section className="section-shell pt-0" id="what-is-it">
         <div className="glass-card rounded-[32px] px-6 py-6 sm:px-8">
-          <div className="grid gap-6 lg:grid-cols-[0.55fr_1.45fr] lg:items-center">
+          <div className="grid gap-8 lg:grid-cols-[0.62fr_1.38fr] lg:items-center">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.26em] text-slate-500">Trusted for focused setup work</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.26em] text-slate-500">What the app is for</p>
               <h2 className="mt-3 text-[clamp(1.75rem,4vw,2.8rem)] font-semibold tracking-[-0.06em] text-slate-950">
-                Designed for builders who care about flow state.
+                A calm control panel for the work you repeat.
               </h2>
+              <p className="mt-4 text-sm leading-6 text-slate-600">
+                If your day starts with opening the same tools, running the same commands, and checking the same tabs,
+                Adv.Flow turns that routine into something you can run, understand, and improve.
+              </p>
             </div>
             <div className="grid gap-4 md:grid-cols-3">
-              {[
-                ["Open source", "Inspect the architecture, contribute, or fork the roadmap."],
-                ["Dev-tool DNA", "Built around terminals, local servers, and real startup routines."],
-                ["Elegant control", "High-polish visuals without hiding the system underneath."],
-              ].map(([title, body]) => (
-                <div key={title} className="rounded-[24px] border border-white/80 bg-white/75 p-5">
-                  <p className="text-sm font-semibold text-slate-950">{title}</p>
-                  <p className="mt-2 text-sm leading-6 text-slate-600">{body}</p>
+              {productBasics.map((item) => (
+                <div key={item.title} className="rounded-[24px] border border-white/80 bg-white/75 p-5">
+                  <div className="mb-4 grid h-10 w-10 place-items-center rounded-2xl bg-[linear-gradient(135deg,#dbeafe,#eef2ff)] text-slate-950">
+                    <item.icon className="h-5 w-5" />
+                  </div>
+                  <p className="text-sm font-semibold text-slate-950">{item.title}</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">{item.body}</p>
                 </div>
               ))}
             </div>
@@ -407,8 +508,8 @@ export default function LandingPage({ stars }: LandingPageProps) {
       <section className="section-shell" id="features">
         <SectionHeading
           eyebrow="Features"
-          title="A premium developer tool deserves interfaces that feel composed and intentional."
-          body="Adv.Flow is positioned like a serious local productivity system, not a generic SaaS workflow board."
+          title="Everything you need to turn setup work into a reusable flow."
+          body="Adv.Flow combines visual planning with real desktop actions, so you can understand exactly what the app controls before you run anything."
         />
 
         <div className="mt-14 space-y-8">
@@ -513,54 +614,48 @@ export default function LandingPage({ stars }: LandingPageProps) {
         </div>
       </section>
 
-      <section className="section-shell" id="workflow">
+      <section className="section-shell" id="guide">
         <div className="grid gap-14 lg:grid-cols-[0.85fr_1.15fr] lg:items-start">
           <div className="max-w-xl">
-            <div className="eyebrow-premium">Workflow story</div>
+            <div className="eyebrow-premium">How to use it</div>
             <h2 className="mt-5 text-[clamp(2rem,4vw,3.75rem)] font-semibold tracking-[-0.06em] text-slate-950">
-              A landing page that shows product thinking, not just feature copy.
+              Build your first useful flow in a few clear moves.
             </h2>
             <p className="mt-4 text-[15px] leading-7 text-slate-600 sm:text-[17px]">
-              The product demo stays visual, structured, and developer-native so visitors immediately understand what
-              Adv.Flow is automating.
+              You do not need to start with a perfect automation. Start with the routine you already repeat, turn each
+              part into a visible step, run it once, and refine it until it feels reliable.
             </p>
+            <div className="mt-8 flex flex-wrap gap-3">
+              <PrimaryButton href="/download">
+                <Download className="h-4 w-4" />
+                Start with the app
+              </PrimaryButton>
+              <SecondaryButton href="/docs">
+                <BookOpen className="h-4 w-4" />
+                Read docs
+              </SecondaryButton>
+            </div>
           </div>
 
           <div className="glass-card rounded-[32px] p-6">
             <div className="mb-6 flex items-center justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.26em] text-slate-500">Live orchestration</p>
-                <h3 className="mt-2 text-xl font-semibold tracking-[-0.04em] text-slate-950">Morning startup workflow</h3>
+                <p className="text-xs font-semibold uppercase tracking-[0.26em] text-slate-500">First run guide</p>
+                <h3 className="mt-2 text-xl font-semibold tracking-[-0.04em] text-slate-950">From install to reusable flow</h3>
               </div>
               <div className="rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs font-medium text-slate-600">
-                Sequenced
+                4 steps
               </div>
             </div>
 
             <div className="grid gap-4">
-              {[
-                {
-                  title: "1. Scan project context",
-                  body: "Detect repo shape, scripts, and likely launch paths before a flow even runs.",
-                  icon: Workflow,
-                },
-                {
-                  title: "2. Start the right stack",
-                  body: "Queue terminals, local services, and browsers with real dependency ordering.",
-                  icon: Command,
-                },
-                {
-                  title: "3. Bring back focus",
-                  body: "Restore docs, tabs, and team context so the day starts with momentum.",
-                  icon: Layers3,
-                },
-              ].map((item) => (
+              {gettingStartedSteps.map((item, index) => (
                 <div key={item.title} className="rounded-[24px] border border-white/80 bg-white/80 p-4 shadow-[0_18px_48px_rgba(148,163,184,0.12)]">
                   <div className="mb-3 flex items-center gap-3">
                     <div className="grid h-10 w-10 place-items-center rounded-2xl bg-[linear-gradient(135deg,#dbeafe,#eef2ff)] text-slate-950">
                       <item.icon className="h-5 w-5" />
                     </div>
-                    <h4 className="text-sm font-semibold text-slate-950">{item.title}</h4>
+                    <h4 className="text-sm font-semibold text-slate-950">{index + 1}. {item.title}</h4>
                   </div>
                   <p className="text-sm leading-6 text-slate-600">{item.body}</p>
                 </div>
@@ -570,11 +665,47 @@ export default function LandingPage({ stars }: LandingPageProps) {
         </div>
       </section>
 
+      <section className="section-shell" id="examples">
+        <SectionHeading
+          eyebrow="Example flows"
+          title="Pick a routine and make it repeatable."
+          body="These examples show how Adv.Flow fits into real days, from developer startup to content work and release prep."
+        />
+
+        <div className="mt-14 grid gap-5 lg:grid-cols-3">
+          {workflowRecipes.map((recipe) => (
+            <article
+              key={recipe.title}
+              className="group relative overflow-hidden rounded-[30px] border border-white/80 bg-white/82 p-6 shadow-[0_24px_70px_rgba(148,163,184,0.14)] transition duration-300 hover:-translate-y-1.5 hover:shadow-[0_30px_90px_rgba(37,99,235,0.16)]"
+            >
+              <div className="absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,#22c55e,#38bdf8,#6366f1)] opacity-70" />
+              <div className="flex items-center gap-3">
+                <div className="grid h-11 w-11 place-items-center rounded-2xl bg-slate-950 text-white">
+                  <Rocket className="h-5 w-5" />
+                </div>
+                <h3 className="text-[1.35rem] font-semibold tracking-[-0.05em] text-slate-950">{recipe.title}</h3>
+              </div>
+              <p className="mt-4 text-sm leading-6 text-slate-600">{recipe.body}</p>
+              <div className="mt-6 grid gap-3">
+                {recipe.steps.map((step, index) => (
+                  <div key={step} className="flex items-center gap-3 rounded-[18px] border border-slate-200/80 bg-slate-50/80 px-4 py-3">
+                    <span className="grid h-7 w-7 place-items-center rounded-xl bg-white text-xs font-semibold text-slate-600 shadow-[0_8px_22px_rgba(148,163,184,0.14)]">
+                      {index + 1}
+                    </span>
+                    <span className="text-sm font-medium text-slate-700">{step}</span>
+                  </div>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
       <section className="section-shell" id="use-cases">
         <SectionHeading
           eyebrow="Use cases"
           title="Built for the people who obsess over setup speed, clarity, and repeatability."
-          body="This is a premium developer tool, so the positioning stays intentionally local-first, technical, and practical."
+          body="Adv.Flow is easiest to understand when visitors see themselves in the routine: developers, small teams, power users, and anyone who repeats desktop setup."
         />
 
         <div className="mt-14 grid gap-5 lg:grid-cols-3">
@@ -691,11 +822,40 @@ export default function LandingPage({ stars }: LandingPageProps) {
         </div>
       </section>
 
+      <section className="section-shell" id="faq">
+        <div className="grid gap-10 lg:grid-cols-[0.75fr_1.25fr] lg:items-start">
+          <div>
+            <div className="eyebrow-premium">Questions</div>
+            <h2 className="mt-5 text-[clamp(2rem,4vw,3.5rem)] font-semibold tracking-[-0.06em] text-slate-950">
+              Quick answers before you download.
+            </h2>
+            <p className="mt-4 text-[15px] leading-7 text-slate-600 sm:text-[17px]">
+              Learn what Adv.Flow does, how it fits into your day, and why the automation stays understandable.
+            </p>
+          </div>
+          <div className="grid gap-4">
+            {faqItems.map((item) => (
+              <article key={item.question} className="rounded-[26px] border border-white/80 bg-white/82 p-5 shadow-[0_18px_50px_rgba(148,163,184,0.12)]">
+                <div className="flex items-start gap-3">
+                  <div className="grid h-10 w-10 flex-none place-items-center rounded-2xl bg-[linear-gradient(135deg,#dbeafe,#eef2ff)] text-slate-950">
+                    <CircleHelp className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-semibold tracking-[-0.03em] text-slate-950">{item.question}</h3>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">{item.answer}</p>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
       <section className="section-shell" id="pricing">
         <SectionHeading
           eyebrow="Pricing"
-          title="Clean, direct, and aligned with an open-source product."
-          body="Simple pricing keeps the page honest. The premium feel comes from execution quality, not fake enterprise complexity."
+          title="Free to start, open to inspect, easy to support."
+          body="Download the community app for core desktop automation. Support the project through GitHub, feedback, contributions, or direct sponsorship."
         />
 
         <div className="mt-14 grid gap-5 lg:grid-cols-2">
@@ -801,11 +961,14 @@ export default function LandingPage({ stars }: LandingPageProps) {
                 <Link className="block text-sm text-slate-600 transition hover:text-slate-950" href="/download">
                   Download
                 </Link>
-                <a className="block text-sm text-slate-600 transition hover:text-slate-950" href="#features">
+                <a className="block text-sm text-slate-600 transition hover:text-slate-950" href="/features">
                   Features
                 </a>
-                <a className="block text-sm text-slate-600 transition hover:text-slate-950" href="#pricing">
-                  Pricing
+                <a className="block text-sm text-slate-600 transition hover:text-slate-950" href="/community">
+                  Community
+                </a>
+                <a className="block text-sm text-slate-600 transition hover:text-slate-950" href="/docs">
+                  Documentation
                 </a>
               </div>
             </div>

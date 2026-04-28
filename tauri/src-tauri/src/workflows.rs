@@ -1,11 +1,10 @@
+use active_win_pos_rs::get_active_window;
 use chrono::Utc;
-use tracing::{error, info, instrument, warn};
-use futures_util::TryStreamExt;
-use mongodb::{
-    bson::doc,
-    options::ClientOptions,
-    Client, Collection,
+use enigo::{
+    Axis, Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings as EnigoSettings,
 };
+use futures_util::TryStreamExt;
+use mongodb::{bson::doc, options::ClientOptions, Client, Collection};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -17,6 +16,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, State};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
+use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 
 static WORKFLOW_RUN_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -30,6 +31,8 @@ pub struct Workflow {
     pub description: String,
     pub favorite: bool,
     pub kind: String,
+    pub shortcut: String,
+    pub target_app: String,
     pub nodes: Vec<Value>,
     pub edges: Vec<Value>,
     pub tags: Vec<String>,
@@ -46,6 +49,8 @@ impl Default for Workflow {
             description: String::new(),
             favorite: false,
             kind: "desktop".to_string(),
+            shortcut: String::new(),
+            target_app: String::new(),
             nodes: Vec::new(),
             edges: Vec::new(),
             tags: Vec::new(),
@@ -152,7 +157,12 @@ impl AppState {
     }
 
     fn log_backend_event(&self, scope: &str, message: impl AsRef<str>) {
-        log_backend_event(&self.backend_log_path, &self.log_write_lock, scope, message.as_ref());
+        log_backend_event(
+            &self.backend_log_path,
+            &self.log_write_lock,
+            scope,
+            message.as_ref(),
+        );
     }
 
     fn try_start_workflow_run(&self, workflow_id: &str) -> bool {
@@ -165,7 +175,10 @@ impl AppState {
     }
 
     fn finish_workflow_run(&self, workflow_id: &str) {
-        self.active_workflow_runs.lock().unwrap().remove(workflow_id);
+        self.active_workflow_runs
+            .lock()
+            .unwrap()
+            .remove(workflow_id);
     }
 }
 
@@ -248,6 +261,217 @@ fn validate_settings(settings: &mut AppSettings) {
     if settings.local_model_endpoint.trim().is_empty() {
         settings.local_model_endpoint = "http://127.0.0.1:1234/v1".to_string();
     }
+}
+
+fn active_app_name() -> String {
+    match get_active_window() {
+        Ok(window) => window.app_name,
+        Err(_) => String::new(),
+    }
+}
+
+fn app_matches_target(active_app: &str, target_app: &str) -> bool {
+    let target = target_app.trim();
+    target.is_empty() || active_app.to_lowercase().contains(&target.to_lowercase())
+}
+
+fn normalize_key_name(value: &str) -> String {
+    value
+        .trim()
+        .to_lowercase()
+        .replace(' ', "")
+        .replace('_', "")
+        .replace('-', "")
+}
+
+fn parse_shortcut_code(value: &str) -> Option<Code> {
+    let normalized = normalize_key_name(value);
+    match normalized.as_str() {
+        "a" | "keya" => Some(Code::KeyA),
+        "b" | "keyb" => Some(Code::KeyB),
+        "c" | "keyc" => Some(Code::KeyC),
+        "d" | "keyd" => Some(Code::KeyD),
+        "e" | "keye" => Some(Code::KeyE),
+        "f" | "keyf" => Some(Code::KeyF),
+        "g" | "keyg" => Some(Code::KeyG),
+        "h" | "keyh" => Some(Code::KeyH),
+        "i" | "keyi" => Some(Code::KeyI),
+        "j" | "keyj" => Some(Code::KeyJ),
+        "k" | "keyk" => Some(Code::KeyK),
+        "l" | "keyl" => Some(Code::KeyL),
+        "m" | "keym" => Some(Code::KeyM),
+        "n" | "keyn" => Some(Code::KeyN),
+        "o" | "keyo" => Some(Code::KeyO),
+        "p" | "keyp" => Some(Code::KeyP),
+        "q" | "keyq" => Some(Code::KeyQ),
+        "r" | "keyr" => Some(Code::KeyR),
+        "s" | "keys" => Some(Code::KeyS),
+        "t" | "keyt" => Some(Code::KeyT),
+        "u" | "keyu" => Some(Code::KeyU),
+        "v" | "keyv" => Some(Code::KeyV),
+        "w" | "keyw" => Some(Code::KeyW),
+        "x" | "keyx" => Some(Code::KeyX),
+        "y" | "keyy" => Some(Code::KeyY),
+        "z" | "keyz" => Some(Code::KeyZ),
+        "0" | "digit0" => Some(Code::Digit0),
+        "1" | "digit1" => Some(Code::Digit1),
+        "2" | "digit2" => Some(Code::Digit2),
+        "3" | "digit3" => Some(Code::Digit3),
+        "4" | "digit4" => Some(Code::Digit4),
+        "5" | "digit5" => Some(Code::Digit5),
+        "6" | "digit6" => Some(Code::Digit6),
+        "7" | "digit7" => Some(Code::Digit7),
+        "8" | "digit8" => Some(Code::Digit8),
+        "9" | "digit9" => Some(Code::Digit9),
+        "minus" | "-" => Some(Code::Minus),
+        "equal" | "equals" | "=" => Some(Code::Equal),
+        "space" => Some(Code::Space),
+        "enter" | "return" => Some(Code::Enter),
+        "tab" => Some(Code::Tab),
+        "escape" | "esc" => Some(Code::Escape),
+        "backspace" => Some(Code::Backspace),
+        "delete" | "del" => Some(Code::Delete),
+        "arrowleft" | "left" | "leftarrow" => Some(Code::ArrowLeft),
+        "arrowright" | "right" | "rightarrow" => Some(Code::ArrowRight),
+        "arrowup" | "up" | "uparrow" => Some(Code::ArrowUp),
+        "arrowdown" | "down" | "downarrow" => Some(Code::ArrowDown),
+        "f1" => Some(Code::F1),
+        "f2" => Some(Code::F2),
+        "f3" => Some(Code::F3),
+        "f4" => Some(Code::F4),
+        "f5" => Some(Code::F5),
+        "f6" => Some(Code::F6),
+        "f7" => Some(Code::F7),
+        "f8" => Some(Code::F8),
+        "f9" => Some(Code::F9),
+        "f10" => Some(Code::F10),
+        "f11" => Some(Code::F11),
+        "f12" => Some(Code::F12),
+        "bracketleft" | "[" => Some(Code::BracketLeft),
+        "bracketright" | "]" => Some(Code::BracketRight),
+        "backslash" | "\\" => Some(Code::Backslash),
+        "semicolon" | ";" => Some(Code::Semicolon),
+        "quote" | "'" => Some(Code::Quote),
+        "backquote" | "`" => Some(Code::Backquote),
+        "comma" | "," => Some(Code::Comma),
+        "period" | "." => Some(Code::Period),
+        "slash" | "/" => Some(Code::Slash),
+        _ => None,
+    }
+}
+
+fn parse_global_shortcut(value: &str) -> Result<Shortcut, String> {
+    let mut modifiers = Modifiers::empty();
+    let mut code = None;
+
+    for token in value
+        .split('+')
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+    {
+        match normalize_key_name(token).as_str() {
+            "ctrl" | "control" => modifiers.insert(Modifiers::CONTROL),
+            "shift" => modifiers.insert(Modifiers::SHIFT),
+            "alt" | "option" => modifiers.insert(Modifiers::ALT),
+            "meta" | "super" | "win" | "windows" | "cmd" | "command" => {
+                modifiers.insert(Modifiers::SUPER)
+            }
+            "cmdorctrl" | "commandorcontrol" | "commandorctrl" | "ctrlorcmd" => {
+                #[cfg(target_os = "macos")]
+                modifiers.insert(Modifiers::SUPER);
+                #[cfg(not(target_os = "macos"))]
+                modifiers.insert(Modifiers::CONTROL);
+            }
+            _ => {
+                code = parse_shortcut_code(token);
+            }
+        }
+    }
+
+    code.map(|code| Shortcut::new(Some(modifiers), code))
+        .ok_or_else(|| format!("Unsupported shortcut: {value}"))
+}
+
+fn workflow_shortcut(workflow: &Workflow) -> Option<Shortcut> {
+    let shortcut = workflow.shortcut.trim();
+    if shortcut.is_empty() {
+        return None;
+    }
+    parse_global_shortcut(shortcut).ok()
+}
+
+pub fn register_workflow_shortcuts(app: &AppHandle) -> Result<(), String> {
+    let _ = app.global_shortcut().unregister_all();
+    let state = app.state::<AppState>();
+    let workflows = state.workflows.lock().unwrap().clone();
+    let mut registered = HashSet::new();
+
+    for workflow in workflows {
+        let shortcut_text = workflow.shortcut.trim();
+        if shortcut_text.is_empty() {
+            continue;
+        }
+        let shortcut_key = shortcut_text.to_lowercase();
+        if registered.contains(&shortcut_key) {
+            continue;
+        }
+        let shortcut = parse_global_shortcut(shortcut_text)?;
+        app.global_shortcut()
+            .register(shortcut)
+            .map_err(|error| error.to_string())?;
+        registered.insert(shortcut_key);
+    }
+
+    Ok(())
+}
+
+pub fn handle_global_shortcut(app: &AppHandle, shortcut: &Shortcut) {
+    let state = app.state::<AppState>();
+    let active_app = active_app_name();
+    let workflows = state.workflows.lock().unwrap().clone();
+
+    let Some(workflow) = workflows.into_iter().find(|workflow| {
+        workflow_shortcut(workflow)
+            .as_ref()
+            .is_some_and(|candidate| candidate == shortcut)
+            && app_matches_target(&active_app, &workflow.target_app)
+    }) else {
+        return;
+    };
+
+    if !state.try_start_workflow_run(&workflow.id) {
+        warn!(
+            workflow_id = workflow.id,
+            workflow_name = workflow.name,
+            "Skipped duplicate shortcut-triggered workflow run"
+        );
+        return;
+    }
+
+    let workflow_id = workflow.id.clone();
+    let workflow_name = workflow.name.clone();
+    let settings = state.settings.lock().unwrap().clone();
+    let app = app.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        info!(
+            workflow_id,
+            workflow_name, active_app, "Starting workflow from global shortcut"
+        );
+        let result = execute_workflow_nodes(&workflow, &settings);
+        let state = app.state::<AppState>();
+        match &result {
+            Ok(_) => state.log_backend_event(
+                "shortcut",
+                format!("Shortcut workflow finished: {workflow_name} ({workflow_id})"),
+            ),
+            Err(error) => state.log_backend_event(
+                "shortcut",
+                format!("Shortcut workflow failed: {workflow_name} ({workflow_id}): {error}"),
+            ),
+        }
+        state.finish_workflow_run(&workflow_id);
+    });
 }
 
 fn configure_launch_on_startup(enabled: bool) {
@@ -407,7 +631,11 @@ fn known_app_candidates() -> Vec<InstalledApp> {
             id: "vscode".to_string(),
             name: "Visual Studio Code".to_string(),
             command: "open".to_string(),
-            args: vec!["-a".to_string(), "{appPath}".to_string(), "{path}".to_string()],
+            args: vec![
+                "-a".to_string(),
+                "{appPath}".to_string(),
+                "{path}".to_string(),
+            ],
             path: Some("/Applications/Visual Studio Code.app".to_string()),
             source: "applications".to_string(),
         },
@@ -415,7 +643,11 @@ fn known_app_candidates() -> Vec<InstalledApp> {
             id: "cursor".to_string(),
             name: "Cursor".to_string(),
             command: "open".to_string(),
-            args: vec!["-a".to_string(), "{appPath}".to_string(), "{path}".to_string()],
+            args: vec![
+                "-a".to_string(),
+                "{appPath}".to_string(),
+                "{path}".to_string(),
+            ],
             path: Some("/Applications/Cursor.app".to_string()),
             source: "applications".to_string(),
         },
@@ -431,7 +663,11 @@ fn known_app_candidates() -> Vec<InstalledApp> {
             id: "terminal".to_string(),
             name: "Terminal".to_string(),
             command: "open".to_string(),
-            args: vec!["-a".to_string(), "Terminal".to_string(), "{path}".to_string()],
+            args: vec![
+                "-a".to_string(),
+                "Terminal".to_string(),
+                "{path}".to_string(),
+            ],
             path: None,
             source: "macos".to_string(),
         },
@@ -548,18 +784,30 @@ fn collect_mac_apps(apps: &mut Vec<InstalledApp>) {
     }
 
     for root in roots {
-        let Ok(entries) = fs::read_dir(root) else { continue; };
+        let Ok(entries) = fs::read_dir(root) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("app") { continue; }
-            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue; };
+            if path.extension().and_then(|e| e.to_str()) != Some("app") {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
             let id = format!("mac-{}", slug(stem));
-            if apps.iter().any(|app| app.id == id) { continue; }
+            if apps.iter().any(|app| app.id == id) {
+                continue;
+            }
             apps.push(InstalledApp {
                 id,
                 name: stem.to_string(),
                 command: "open".to_string(),
-                args: vec!["-a".to_string(), "{appPath}".to_string(), "{path}".to_string()],
+                args: vec![
+                    "-a".to_string(),
+                    "{appPath}".to_string(),
+                    "{path}".to_string(),
+                ],
                 path: Some(path.to_string_lossy().to_string()),
                 source: "macos".to_string(),
             });
@@ -573,10 +821,14 @@ fn collect_linux_apps(apps: &mut Vec<InstalledApp>) {
         roots.push(PathBuf::from(home).join(".local/share/applications"));
     }
     for root in roots {
-        let Ok(entries) = fs::read_dir(root) else { continue; };
+        let Ok(entries) = fs::read_dir(root) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("desktop") { continue; }
+            if path.extension().and_then(|e| e.to_str()) != Some("desktop") {
+                continue;
+            }
             if let Ok(content) = fs::read_to_string(&path) {
                 let mut name = String::new();
                 let mut exec = String::new();
@@ -586,12 +838,18 @@ fn collect_linux_apps(apps: &mut Vec<InstalledApp>) {
                         name = line[5..].to_string();
                     } else if line.starts_with("Exec=") && exec.is_empty() {
                         let full_exec = line[5..].to_string();
-                        exec = full_exec.split_whitespace().next().unwrap_or("").to_string();
+                        exec = full_exec
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or("")
+                            .to_string();
                     }
                 }
                 if !name.is_empty() && !exec.is_empty() {
                     let id = format!("linux-{}", slug(&name));
-                    if apps.iter().any(|app| app.id == id) { continue; }
+                    if apps.iter().any(|app| app.id == id) {
+                        continue;
+                    }
                     apps.push(InstalledApp {
                         id,
                         name,
@@ -610,7 +868,11 @@ fn app_from_id(apps: &[InstalledApp], id: &str) -> InstalledApp {
     apps.iter()
         .find(|app| app.id == id)
         .cloned()
-        .unwrap_or_else(|| apps.first().cloned().unwrap_or_else(|| known_app_candidates()[0].clone()))
+        .unwrap_or_else(|| {
+            apps.first()
+                .cloned()
+                .unwrap_or_else(|| known_app_candidates()[0].clone())
+        })
 }
 
 fn ps_quote(value: &str) -> String {
@@ -631,7 +893,10 @@ fn shell_type_or_default(value: Option<&str>) -> &str {
 
 fn shell_command_and_args(shell_type: Option<&str>, command: &str) -> (String, Vec<String>) {
     match shell_type_or_default(shell_type) {
-        "cmd" => ("cmd".to_string(), vec!["/c".to_string(), command.to_string()]),
+        "cmd" => (
+            "cmd".to_string(),
+            vec!["/c".to_string(), command.to_string()],
+        ),
         "powershell" => (
             "powershell".to_string(),
             vec![
@@ -646,7 +911,11 @@ fn shell_command_and_args(shell_type: Option<&str>, command: &str) -> (String, V
             if command_exists("pwsh") {
                 (
                     "pwsh".to_string(),
-                    vec!["-NoProfile".to_string(), "-Command".to_string(), command.to_string()],
+                    vec![
+                        "-NoProfile".to_string(),
+                        "-Command".to_string(),
+                        command.to_string(),
+                    ],
                 )
             } else {
                 (
@@ -660,10 +929,19 @@ fn shell_command_and_args(shell_type: Option<&str>, command: &str) -> (String, V
                     ],
                 )
             }
-        },
-        "bash" => ("bash".to_string(), vec!["-lc".to_string(), command.to_string()]),
-        "zsh" => ("zsh".to_string(), vec!["-lc".to_string(), command.to_string()]),
-        "sh" => ("sh".to_string(), vec!["-lc".to_string(), command.to_string()]),
+        }
+        "bash" => (
+            "bash".to_string(),
+            vec!["-lc".to_string(), command.to_string()],
+        ),
+        "zsh" => (
+            "zsh".to_string(),
+            vec!["-lc".to_string(), command.to_string()],
+        ),
+        "sh" => (
+            "sh".to_string(),
+            vec!["-lc".to_string(), command.to_string()],
+        ),
         _ => {
             if cfg!(windows) {
                 (
@@ -679,13 +957,20 @@ fn shell_command_and_args(shell_type: Option<&str>, command: &str) -> (String, V
             } else if let Ok(user_shell) = std::env::var("SHELL") {
                 (user_shell, vec!["-lc".to_string(), command.to_string()])
             } else {
-                ("sh".to_string(), vec!["-lc".to_string(), command.to_string()])
+                (
+                    "sh".to_string(),
+                    vec!["-lc".to_string(), command.to_string()],
+                )
             }
         }
     }
 }
 
-fn start_new_terminal(#[allow(unused_variables)] shell_type: Option<&str>, cwd: &Path, command: &str) -> Result<(), String> {
+fn start_new_terminal(
+    #[allow(unused_variables)] shell_type: Option<&str>,
+    cwd: &Path,
+    command: &str,
+) -> Result<(), String> {
     let cwd_text = cwd.to_string_lossy().to_string();
 
     #[cfg(windows)]
@@ -718,11 +1003,19 @@ fn start_new_terminal(#[allow(unused_variables)] shell_type: Option<&str>, cwd: 
                     "-ExecutionPolicy".to_string(),
                     "Bypass".to_string(),
                     "-Command".to_string(),
-                    format!("Set-Location -LiteralPath {}; {}", ps_quote(&cwd_text), command),
+                    format!(
+                        "Set-Location -LiteralPath {}; {}",
+                        ps_quote(&cwd_text),
+                        command
+                    ),
                 ]);
             } else {
                 args.push("/k".to_string());
-                args.push(format!("cd /d \"{}\" && {}", cwd_text.replace('"', "\"\""), command));
+                args.push(format!(
+                    "cd /d \"{}\" && {}",
+                    cwd_text.replace('"', "\"\""),
+                    command
+                ));
             }
             if shell_args.is_empty() {
                 return Ok(());
@@ -771,19 +1064,39 @@ fn start_new_terminal(#[allow(unused_variables)] shell_type: Option<&str>, cwd: 
             let mut process = Command::new(launcher);
             match launcher {
                 "wezterm" => {
-                    process.args(prefix).arg(cwd).arg("sh").arg("-lc").arg(&script);
+                    process
+                        .args(prefix)
+                        .arg(cwd)
+                        .arg("sh")
+                        .arg("-lc")
+                        .arg(&script);
                 }
                 "kitty" => {
-                    process.arg("--directory").arg(cwd).args(prefix).arg(&script);
+                    process
+                        .arg("--directory")
+                        .arg(cwd)
+                        .args(prefix)
+                        .arg(&script);
                 }
                 "alacritty" => {
-                    process.arg("--working-directory").arg(cwd).args(prefix).arg(&script);
+                    process
+                        .arg("--working-directory")
+                        .arg(cwd)
+                        .args(prefix)
+                        .arg(&script);
                 }
                 "xfce4-terminal" => {
-                    process.arg("--working-directory").arg(cwd).arg("-e").arg(format!("sh -lc {}", sh_quote(&script)));
+                    process
+                        .arg("--working-directory")
+                        .arg(cwd)
+                        .arg("-e")
+                        .arg(format!("sh -lc {}", sh_quote(&script)));
                 }
                 "gnome-terminal" => {
-                    process.arg(format!("--working-directory={}", cwd.display())).args(prefix).arg(&script);
+                    process
+                        .arg(format!("--working-directory={}", cwd.display()))
+                        .args(prefix)
+                        .arg(&script);
                 }
                 "konsole" => {
                     process.arg("--workdir").arg(cwd).args(prefix).arg(&script);
@@ -792,10 +1105,15 @@ fn start_new_terminal(#[allow(unused_variables)] shell_type: Option<&str>, cwd: 
                     process.current_dir(cwd).args(prefix).arg(&script);
                 }
             }
-            return process.spawn().map(|_| ()).map_err(|error| error.to_string());
+            return process
+                .spawn()
+                .map(|_| ())
+                .map_err(|error| error.to_string());
         }
 
-        return Err("No supported terminal application was found on this Linux system.".to_string());
+        return Err(
+            "No supported terminal application was found on this Linux system.".to_string(),
+        );
     }
 
     #[allow(unreachable_code)]
@@ -852,7 +1170,10 @@ fn browser_launch_command(browser: &str, url: &str) -> (String, Vec<String>) {
             "firefox" => vec!["firefox"],
             _ => vec![],
         };
-        if let Some(found) = candidates.into_iter().find(|candidate| command_exists(candidate)) {
+        if let Some(found) = candidates
+            .into_iter()
+            .find(|candidate| command_exists(candidate))
+        {
             return (found.to_string(), vec![url.to_string()]);
         }
         return ("xdg-open".to_string(), vec![url.to_string()]);
@@ -894,10 +1215,16 @@ fn resolve_working_directory(value: &str) -> Result<PathBuf, String> {
     };
 
     if !path.exists() {
-        return Err(format!("Working directory does not exist: {}", path.display()));
+        return Err(format!(
+            "Working directory does not exist: {}",
+            path.display()
+        ));
     }
     if !path.is_dir() {
-        return Err(format!("Working directory is not a folder: {}", path.display()));
+        return Err(format!(
+            "Working directory is not a folder: {}",
+            path.display()
+        ));
     }
 
     Ok(path)
@@ -948,6 +1275,11 @@ fn normalize_node(node: &mut Value, index: usize) {
                 "openApp"
                     | "runCommand"
                     | "openBrowser"
+                    | "macroKeyCombo"
+                    | "macroTypeText"
+                    | "macroMouseClick"
+                    | "macroMoveMouse"
+                    | "macroScroll"
                     | "delay"
             )
         })
@@ -965,7 +1297,10 @@ fn normalize_node(node: &mut Value, index: usize) {
     object.insert("type".to_string(), json!(node_type));
     object.insert("data".to_string(), data);
 
-    if !object.get("position").is_some_and(|value| value.is_object()) {
+    if !object
+        .get("position")
+        .is_some_and(|value| value.is_object())
+    {
         object.insert(
             "position".to_string(),
             json!({ "x": 80 + ((index as i32 % 3) * 280), "y": 90 + ((index as i32 / 3) * 180) }),
@@ -978,7 +1313,11 @@ fn normalize_edge(edge: &mut Value, index: usize) {
         *edge = json!({});
     }
     let object = edge.as_object_mut().unwrap();
-    if !object.get("id").and_then(|value| value.as_str()).is_some_and(|value| !value.trim().is_empty()) {
+    if !object
+        .get("id")
+        .and_then(|value| value.as_str())
+        .is_some_and(|value| !value.trim().is_empty())
+    {
         object.insert("id".to_string(), json!(format!("edge_{}", index + 1)));
     }
     if !object.contains_key("animated") {
@@ -1030,8 +1369,23 @@ fn detect_role_and_port(pkg: &Value, folder_name: &str, dev_script: &str) -> (St
     }
     let has = |name: &str| deps.iter().any(|dep| dep == name);
 
-    let frontend_markers = ["react", "vite", "next", "vue", "svelte", "@angular/core", "solid-js"];
-    let backend_markers = ["express", "fastify", "koa", "@nestjs/core", "hapi", "@hapi/hapi"];
+    let frontend_markers = [
+        "react",
+        "vite",
+        "next",
+        "vue",
+        "svelte",
+        "@angular/core",
+        "solid-js",
+    ];
+    let backend_markers = [
+        "express",
+        "fastify",
+        "koa",
+        "@nestjs/core",
+        "hapi",
+        "@hapi/hapi",
+    ];
 
     let mut role = "unknown".to_string();
     if frontend_markers.iter().any(|marker| has(marker)) {
@@ -1040,9 +1394,15 @@ fn detect_role_and_port(pkg: &Value, folder_name: &str, dev_script: &str) -> (St
         role = "backend".to_string();
     } else {
         let lower = folder_name.to_lowercase();
-        if ["client", "web", "frontend", "ui", "app"].iter().any(|name| lower == *name) {
+        if ["client", "web", "frontend", "ui", "app"]
+            .iter()
+            .any(|name| lower == *name)
+        {
             role = "frontend".to_string();
-        } else if ["server", "api", "backend"].iter().any(|name| lower == *name) {
+        } else if ["server", "api", "backend"]
+            .iter()
+            .any(|name| lower == *name)
+        {
             role = "backend".to_string();
         }
     }
@@ -1084,11 +1444,7 @@ fn read_package(path: &Path, root: &Path) -> Option<DetectedPackage> {
 
     let chosen_script = ["dev", "develop", "start", "serve"]
         .iter()
-        .find(|name| {
-            scripts
-                .map(|map| map.contains_key(**name))
-                .unwrap_or(false)
-        })
+        .find(|name| scripts.map(|map| map.contains_key(**name)).unwrap_or(false))
         .map(|name| name.to_string());
 
     let dev_script_value = chosen_script
@@ -1219,11 +1575,7 @@ fn workflow_generation_prompt_with_scan(
         .iter()
         .find(|pkg| pkg.role_hint == "frontend" && pkg.likely_port.is_some())
         .and_then(|pkg| pkg.likely_port)
-        .or_else(|| {
-            packages
-                .iter()
-                .find_map(|pkg| pkg.likely_port)
-        });
+        .or_else(|| packages.iter().find_map(|pkg| pkg.likely_port));
     let frontend_url = frontend_port
         .map(|port| format!("http://localhost:{port}"))
         .unwrap_or_else(|| "http://localhost:3000".to_string());
@@ -1379,9 +1731,8 @@ async fn call_gemini_for_workflow(
     }
 
     let model = settings.gemini_model.trim();
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-    );
+    let url =
+        format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent");
     let body = json!({
         "contents": [{
             "parts": [{ "text": prompt_text }]
@@ -1404,7 +1755,12 @@ async fn call_gemini_for_workflow(
         }
     });
 
-    eprintln!("\n===== Gemini request =====\nmodel: {model}\nprompt:\n{}\n===== end prompt =====\n", body["contents"][0]["parts"][0]["text"].as_str().unwrap_or(""));
+    eprintln!(
+        "\n===== Gemini request =====\nmodel: {model}\nprompt:\n{}\n===== end prompt =====\n",
+        body["contents"][0]["parts"][0]["text"]
+            .as_str()
+            .unwrap_or("")
+    );
 
     let client = reqwest::Client::new();
     let raw = client
@@ -1434,11 +1790,15 @@ async fn call_gemini_for_workflow(
         .map_err(|error| format!("Gemini returned invalid workflow JSON: {error} | text: {text}"))
 }
 
-async fn call_ai_for_workflow(settings: &AppSettings, prompt_text: String) -> Result<Workflow, String> {
+async fn call_ai_for_workflow(
+    settings: &AppSettings,
+    prompt_text: String,
+) -> Result<Workflow, String> {
     if settings.ai_provider == "local" {
         let text = call_local_model_json(settings, &prompt_text, "workflow generation").await?;
-        serde_json::from_str(&text)
-            .map_err(|error| format!("Local model returned invalid workflow JSON: {error} | text: {text}"))
+        serde_json::from_str(&text).map_err(|error| {
+            format!("Local model returned invalid workflow JSON: {error} | text: {text}")
+        })
     } else {
         call_gemini_for_workflow(settings, prompt_text).await
     }
@@ -1450,11 +1810,8 @@ async fn generate_workflow_with_gemini(
     directory: &str,
     app: &InstalledApp,
 ) -> Result<Workflow, String> {
-    let workflow = call_ai_for_workflow(
-        settings,
-        workflow_generation_prompt(prompt, directory, app),
-    )
-    .await?;
+    let workflow =
+        call_ai_for_workflow(settings, workflow_generation_prompt(prompt, directory, app)).await?;
     Ok(normalize_generated_workflow(workflow, prompt, directory))
 }
 
@@ -1508,7 +1865,11 @@ fn build_workflow_from_scan(
 
     for (idx, pkg) in packages.iter().enumerate() {
         let id = format!("node_run_{}", idx + 1);
-        let label_path = if pkg.rel_path.is_empty() { ".".to_string() } else { pkg.rel_path.clone() };
+        let label_path = if pkg.rel_path.is_empty() {
+            ".".to_string()
+        } else {
+            pkg.rel_path.clone()
+        };
         let label = format!(
             "Run {} ({})",
             pkg.role_hint,
@@ -1593,12 +1954,11 @@ fn build_workflow_from_scan(
         }),
         favorite: false,
         kind: "desktop".to_string(),
+        shortcut: String::new(),
+        target_app: String::new(),
         nodes,
         edges,
-        tags: vec![
-            "ai".to_string(),
-            "from-folder".to_string(),
-        ],
+        tags: vec!["ai".to_string(), "from-folder".to_string()],
         created_at: timestamp(),
         updated_at: timestamp(),
     };
@@ -1614,7 +1974,10 @@ async fn ai_name_and_description(
 ) -> Option<(String, String)> {
     if settings.ai_provider == "gemini"
         && settings.gemini_api_key.trim().is_empty()
-        && std::env::var("GEMINI_API_KEY").unwrap_or_default().trim().is_empty()
+        && std::env::var("GEMINI_API_KEY")
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
     {
         return None;
     }
@@ -1632,7 +1995,9 @@ Return JSON: {{ "name": "...", "description": "..." }}"#
     );
 
     let raw_text = if settings.ai_provider == "local" {
-        call_local_model_json(settings, &prompt_text, "workflow naming").await.ok()?
+        call_local_model_json(settings, &prompt_text, "workflow naming")
+            .await
+            .ok()?
     } else {
         let api_key = if settings.gemini_api_key.trim().is_empty() {
             std::env::var("GEMINI_API_KEY").unwrap_or_default()
@@ -1679,7 +2044,10 @@ Return JSON: {{ "name": "...", "description": "..." }}"#
     };
 
     let parsed: Value = serde_json::from_str(&raw_text).ok()?;
-    let name = parsed.get("name").and_then(|value| value.as_str())?.to_string();
+    let name = parsed
+        .get("name")
+        .and_then(|value| value.as_str())?
+        .to_string();
     let description = parsed
         .get("description")
         .and_then(|value| value.as_str())
@@ -1704,14 +2072,11 @@ async fn generate_workflow_from_scan(
         scan_summary(packages)
     );
 
-    let (name_hint, description_hint) = match ai_name_and_description(
-        settings, directory, prompt, packages,
-    )
-    .await
-    {
-        Some((name, description)) => (Some(name), Some(description)),
-        None => (None, None),
-    };
+    let (name_hint, description_hint) =
+        match ai_name_and_description(settings, directory, prompt, packages).await {
+            Some((name, description)) => (Some(name), Some(description)),
+            None => (None, None),
+        };
 
     Ok(build_workflow_from_scan(
         directory,
@@ -1783,7 +2148,10 @@ async fn update_node_with_ai(
 
 fn run_command_node(data: &Value, timeout_seconds: u32) -> Result<String, String> {
     let node_run_id = NODE_RUN_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let command = data.get("command").and_then(|value| value.as_str()).unwrap_or("");
+    let command = data
+        .get("command")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
     if command.trim().is_empty() {
         return Err("Command is empty".to_string());
     }
@@ -1826,21 +2194,30 @@ fn run_command_node(data: &Value, timeout_seconds: u32) -> Result<String, String
     let timeout = Duration::from_secs(u64::from(timeout_seconds.max(1)));
     let started_at = Instant::now();
     loop {
-        if child.try_wait().map_err(|error| error.to_string())?.is_some() {
+        if child
+            .try_wait()
+            .map_err(|error| error.to_string())?
+            .is_some()
+        {
             break;
         }
 
         if started_at.elapsed() >= timeout {
             let _ = child.kill();
             let _ = child.wait();
-            warn!(node_run_id, timeout_seconds, command, "runCommand node timed out");
+            warn!(
+                node_run_id,
+                timeout_seconds, command, "runCommand node timed out"
+            );
             return Err(format!("Command timed out after {timeout_seconds}s."));
         }
 
         std::thread::sleep(Duration::from_millis(50));
     }
 
-    let output = child.wait_with_output().map_err(|error| error.to_string())?;
+    let output = child
+        .wait_with_output()
+        .map_err(|error| error.to_string())?;
     if output.status.success() {
         info!(
             node_run_id,
@@ -1865,13 +2242,22 @@ fn run_command_node(data: &Value, timeout_seconds: u32) -> Result<String, String
 
 fn open_app_node(data: &Value) -> Result<String, String> {
     let node_run_id = NODE_RUN_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let command = data.get("command").and_then(|value| value.as_str()).unwrap_or("");
-    let app_path = data.get("appPath").and_then(|value| value.as_str()).unwrap_or("");
+    let command = data
+        .get("command")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let app_path = data
+        .get("appPath")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
     if command.trim().is_empty() && app_path.trim().is_empty() {
         return Err("No app command selected".to_string());
     }
 
-    let folder_path = data.get("folderPath").and_then(|value| value.as_str()).unwrap_or("");
+    let folder_path = data
+        .get("folderPath")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
     let args: Vec<String> = data
         .get("args")
         .and_then(|value| value.as_array())
@@ -1895,7 +2281,11 @@ fn open_app_node(data: &Value) -> Result<String, String> {
             }
         });
 
-    let file = if app_path.trim().is_empty() { command } else { app_path };
+    let file = if app_path.trim().is_empty() {
+        command
+    } else {
+        app_path
+    };
     info!(
         node_run_id,
         command,
@@ -1933,7 +2323,13 @@ fn open_app_node(data: &Value) -> Result<String, String> {
             )
         };
         Command::new("powershell")
-            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &script,
+            ])
             .spawn()
             .map_err(|error| error.to_string())?;
         info!(node_run_id, file, "openApp node launched on Windows");
@@ -1945,7 +2341,10 @@ fn open_app_node(data: &Value) -> Result<String, String> {
             if file.ends_with(".app") {
                 process.arg("-a").arg(file);
             }
-            process.args(&args).spawn().map_err(|error| error.to_string())?;
+            process
+                .args(&args)
+                .spawn()
+                .map_err(|error| error.to_string())?;
         } else if Path::new(file).exists() || command_exists(file) {
             Command::new(file)
                 .args(&args)
@@ -1974,11 +2373,17 @@ fn open_app_node(data: &Value) -> Result<String, String> {
 }
 
 fn open_browser_node(data: &Value) -> Result<String, String> {
-    let url = data.get("url").and_then(|value| value.as_str()).unwrap_or("");
+    let url = data
+        .get("url")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
     if url.trim().is_empty() {
         return Err("URL is empty".to_string());
     }
-    let browser = data.get("browser").and_then(|value| value.as_str()).unwrap_or("system");
+    let browser = data
+        .get("browser")
+        .and_then(|value| value.as_str())
+        .unwrap_or("system");
     let (command, args) = browser_launch_command(browser, url);
     Command::new(command)
         .args(args)
@@ -1987,15 +2392,204 @@ fn open_browser_node(data: &Value) -> Result<String, String> {
     Ok(format!("Opened {url}"))
 }
 
+fn enigo_key_from_name(value: &str) -> Option<Key> {
+    let normalized = normalize_key_name(value);
+    match normalized.as_str() {
+        "ctrl" | "control" => Some(Key::Control),
+        "shift" => Some(Key::Shift),
+        "alt" | "option" => Some(Key::Alt),
+        "meta" | "super" | "win" | "windows" => Some(Key::Meta),
+        "cmd" | "command" => Some(Key::Meta),
+        "cmdorctrl" | "commandorcontrol" | "commandorctrl" | "ctrlorcmd" => {
+            #[cfg(target_os = "macos")]
+            {
+                Some(Key::Meta)
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                Some(Key::Control)
+            }
+        }
+        "enter" | "return" => Some(Key::Return),
+        "tab" => Some(Key::Tab),
+        "space" => Some(Key::Space),
+        "escape" | "esc" => Some(Key::Escape),
+        "backspace" => Some(Key::Backspace),
+        "delete" | "del" => Some(Key::Delete),
+        "home" => Some(Key::Home),
+        "end" => Some(Key::End),
+        "pageup" => Some(Key::PageUp),
+        "pagedown" => Some(Key::PageDown),
+        "left" | "leftarrow" | "arrowleft" => Some(Key::LeftArrow),
+        "right" | "rightarrow" | "arrowright" => Some(Key::RightArrow),
+        "up" | "uparrow" | "arrowup" => Some(Key::UpArrow),
+        "down" | "downarrow" | "arrowdown" => Some(Key::DownArrow),
+        "f1" => Some(Key::F1),
+        "f2" => Some(Key::F2),
+        "f3" => Some(Key::F3),
+        "f4" => Some(Key::F4),
+        "f5" => Some(Key::F5),
+        "f6" => Some(Key::F6),
+        "f7" => Some(Key::F7),
+        "f8" => Some(Key::F8),
+        "f9" => Some(Key::F9),
+        "f10" => Some(Key::F10),
+        "f11" => Some(Key::F11),
+        "f12" => Some(Key::F12),
+        "plus" => Some(Key::Unicode('+')),
+        "minus" => Some(Key::Unicode('-')),
+        "comma" => Some(Key::Unicode(',')),
+        "period" => Some(Key::Unicode('.')),
+        "slash" => Some(Key::Unicode('/')),
+        "backslash" => Some(Key::Unicode('\\')),
+        "semicolon" => Some(Key::Unicode(';')),
+        "quote" => Some(Key::Unicode('\'')),
+        "backquote" => Some(Key::Unicode('`')),
+        _ => {
+            let mut chars = value.trim().chars();
+            match (chars.next(), chars.next()) {
+                (Some(character), None) => Some(Key::Unicode(character.to_ascii_lowercase())),
+                _ => None,
+            }
+        }
+    }
+}
+
+fn parse_macro_keys(combo: &str) -> Result<Vec<Key>, String> {
+    let keys = combo
+        .split('+')
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(|token| enigo_key_from_name(token).ok_or_else(|| format!("Unsupported key: {token}")))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if keys.is_empty() {
+        Err("Key combo is empty".to_string())
+    } else {
+        Ok(keys)
+    }
+}
+
+fn with_enigo<T>(action: impl FnOnce(&mut Enigo) -> Result<T, String>) -> Result<T, String> {
+    let mut enigo = Enigo::new(&EnigoSettings::default()).map_err(|error| error.to_string())?;
+    action(&mut enigo)
+}
+
+fn macro_key_combo_node(data: &Value) -> Result<String, String> {
+    let combo = data
+        .get("combo")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let keys = parse_macro_keys(combo)?;
+
+    with_enigo(|enigo| {
+        for key in &keys {
+            enigo
+                .key(key.clone(), Direction::Press)
+                .map_err(|error| error.to_string())?;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        for key in keys.iter().rev() {
+            enigo
+                .key(key.clone(), Direction::Release)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(format!("Pressed {combo}"))
+    })
+}
+
+fn macro_type_text_node(data: &Value) -> Result<String, String> {
+    let text = data
+        .get("text")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    with_enigo(|enigo| {
+        enigo.text(text).map_err(|error| error.to_string())?;
+        Ok("Typed text".to_string())
+    })
+}
+
+fn macro_mouse_click_node(data: &Value) -> Result<String, String> {
+    let button = match data
+        .get("button")
+        .and_then(|value| value.as_str())
+        .unwrap_or("left")
+        .to_lowercase()
+        .as_str()
+    {
+        "right" => Button::Right,
+        "middle" => Button::Middle,
+        _ => Button::Left,
+    };
+    with_enigo(|enigo| {
+        enigo
+            .button(button, Direction::Click)
+            .map_err(|error| error.to_string())?;
+        Ok("Clicked mouse".to_string())
+    })
+}
+
+fn macro_move_mouse_node(data: &Value) -> Result<String, String> {
+    let x = data.get("x").and_then(|value| value.as_i64()).unwrap_or(0) as i32;
+    let y = data.get("y").and_then(|value| value.as_i64()).unwrap_or(0) as i32;
+    let coordinate = match data
+        .get("coordinate")
+        .and_then(|value| value.as_str())
+        .unwrap_or("absolute")
+    {
+        "relative" => Coordinate::Rel,
+        _ => Coordinate::Abs,
+    };
+    with_enigo(|enigo| {
+        enigo
+            .move_mouse(x, y, coordinate)
+            .map_err(|error| error.to_string())?;
+        Ok(format!("Moved mouse to {x}, {y}"))
+    })
+}
+
+fn macro_scroll_node(data: &Value) -> Result<String, String> {
+    let amount = data
+        .get("amount")
+        .and_then(|value| value.as_i64())
+        .unwrap_or(3) as i32;
+    let axis = match data
+        .get("axis")
+        .and_then(|value| value.as_str())
+        .unwrap_or("vertical")
+    {
+        "horizontal" => Axis::Horizontal,
+        _ => Axis::Vertical,
+    };
+    with_enigo(|enigo| {
+        enigo
+            .scroll(amount, axis)
+            .map_err(|error| error.to_string())?;
+        Ok(format!("Scrolled {amount}"))
+    })
+}
+
 #[instrument(skip(settings))]
 fn execute_node(node: &Value, settings: &AppSettings) -> Result<String, String> {
     let data = node.get("data").unwrap_or(node);
-    match data.get("type").and_then(|value| value.as_str()).unwrap_or("") {
+    match data
+        .get("type")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+    {
         "openApp" => open_app_node(data),
         "runCommand" => run_command_node(data, settings.command_timeout_seconds),
         "openBrowser" => open_browser_node(data),
+        "macroKeyCombo" => macro_key_combo_node(data),
+        "macroTypeText" => macro_type_text_node(data),
+        "macroMouseClick" => macro_mouse_click_node(data),
+        "macroMoveMouse" => macro_move_mouse_node(data),
+        "macroScroll" => macro_scroll_node(data),
         "delay" => {
-            let delay = data.get("delay").and_then(|value| value.as_u64()).unwrap_or(1000);
+            let delay = data
+                .get("delay")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(1000);
             std::thread::sleep(std::time::Duration::from_millis(delay.min(60_000)));
             Ok(format!("Waited {delay}ms"))
         }
@@ -2006,18 +2600,10 @@ fn execute_node(node: &Value, settings: &AppSettings) -> Result<String, String> 
 fn extract_json_text(raw: &str) -> String {
     let trimmed = raw.trim();
     if let Some(stripped) = trimmed.strip_prefix("```json") {
-        return stripped
-            .trim()
-            .trim_end_matches("```")
-            .trim()
-            .to_string();
+        return stripped.trim().trim_end_matches("```").trim().to_string();
     }
     if let Some(stripped) = trimmed.strip_prefix("```") {
-        return stripped
-            .trim()
-            .trim_end_matches("```")
-            .trim()
-            .to_string();
+        return stripped.trim().trim_end_matches("```").trim().to_string();
     }
     trimmed.to_string()
 }
@@ -2110,7 +2696,10 @@ fn execute_workflow_nodes(workflow: &Workflow, settings: &AppSettings) -> Result
 
 async fn workflow_collection(settings: &AppSettings) -> Result<Collection<Workflow>, String> {
     if settings.mongodb_uri.trim().is_empty() {
-        return Err("Add a MongoDB connection string in Settings before enabling cloud storage.".to_string());
+        return Err(
+            "Add a MongoDB connection string in Settings before enabling cloud storage."
+                .to_string(),
+        );
     }
 
     let mut options = ClientOptions::parse(&settings.mongodb_uri)
@@ -2226,14 +2815,17 @@ pub async fn export_workflow(
     path: String,
 ) -> Result<(), String> {
     let workflows = get_workflows(state).await?;
-    let workflow = workflow_by_id_or_name(&workflows, &id)
-        .ok_or_else(|| "Workflow not found".to_string())?;
+    let workflow =
+        workflow_by_id_or_name(&workflows, &id).ok_or_else(|| "Workflow not found".to_string())?;
     let json = serde_json::to_string_pretty(&workflow).map_err(|error| error.to_string())?;
     fs::write(path, json).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub async fn export_all_workflows(state: State<'_, AppState>, path: String) -> Result<usize, String> {
+pub async fn export_all_workflows(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<usize, String> {
     let workflows = get_workflows(state).await?;
     let count = workflows.len();
     let json = serde_json::to_string_pretty(&workflows).map_err(|error| error.to_string())?;
@@ -2242,10 +2834,7 @@ pub async fn export_all_workflows(state: State<'_, AppState>, path: String) -> R
 }
 
 #[tauri::command]
-pub async fn import_workflow(
-    state: State<'_, AppState>,
-    path: String,
-) -> Result<Workflow, String> {
+pub async fn import_workflow(state: State<'_, AppState>, path: String) -> Result<Workflow, String> {
     let content = fs::read_to_string(path).map_err(|error| error.to_string())?;
     let value: Value = serde_json::from_str(&content).map_err(|error| error.to_string())?;
     let mut workflow: Workflow = if value.is_array() {
@@ -2427,7 +3016,10 @@ pub async fn get_workflows(state: State<'_, AppState>) -> Result<Vec<Workflow>, 
 }
 
 #[tauri::command]
-pub async fn create_workflow(state: State<'_, AppState>, payload: Value) -> Result<Workflow, String> {
+pub async fn create_workflow(
+    state: State<'_, AppState>,
+    payload: Value,
+) -> Result<Workflow, String> {
     let now = timestamp();
     let mut workflow = Workflow {
         id: Uuid::new_v4().to_string(),
@@ -2446,6 +3038,16 @@ pub async fn create_workflow(state: State<'_, AppState>, payload: Value) -> Resu
             .and_then(|value| value.as_bool())
             .unwrap_or(false),
         kind: "desktop".to_string(),
+        shortcut: payload
+            .get("shortcut")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string(),
+        target_app: payload
+            .get("targetApp")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string(),
         nodes: payload
             .get("nodes")
             .and_then(|value| value.as_array())
@@ -2517,7 +3119,10 @@ pub async fn toggle_favorite(state: State<'_, AppState>, id: String) -> Result<(
 }
 
 #[tauri::command]
-pub async fn duplicate_workflow(state: State<'_, AppState>, id: String) -> Result<Workflow, String> {
+pub async fn duplicate_workflow(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Workflow, String> {
     let settings = state.settings.lock().unwrap().clone();
 
     let original = if settings.storage_mode == "mongodb" {
@@ -2651,6 +3256,12 @@ fn apply_workflow_payload(workflow: &mut Workflow, payload: &Value) {
     if let Some(favorite) = payload.get("favorite").and_then(|value| value.as_bool()) {
         workflow.favorite = favorite;
     }
+    if let Some(shortcut) = payload.get("shortcut").and_then(|value| value.as_str()) {
+        workflow.shortcut = shortcut.to_string();
+    }
+    if let Some(target_app) = payload.get("targetApp").and_then(|value| value.as_str()) {
+        workflow.target_app = target_app.to_string();
+    }
     if let Some(kind) = payload.get("kind").and_then(|value| value.as_str()) {
         workflow.kind = if kind == "desktop" {
             "desktop".to_string()
@@ -2680,6 +3291,11 @@ pub async fn test_node(payload: Value) -> Result<(), String> {
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub fn refresh_macro_shortcuts(app: AppHandle) -> Result<(), String> {
+    register_workflow_shortcuts(&app)
 }
 
 #[tauri::command]
@@ -2748,7 +3364,12 @@ pub async fn execute_workflow(state: State<'_, AppState>, id: String) -> Result<
             workflow.name, workflow.id
         );
         state.log_backend_event("workflow", &message);
-        warn!(workflow_id = workflow.id, workflow_name = workflow.name, "{}", message);
+        warn!(
+            workflow_id = workflow.id,
+            workflow_name = workflow.name,
+            "{}",
+            message
+        );
         return Ok(());
     }
 
@@ -2764,9 +3385,10 @@ pub async fn execute_workflow(state: State<'_, AppState>, id: String) -> Result<
         ),
     );
 
-    let result = tauri::async_runtime::spawn_blocking(move || execute_workflow_nodes(&workflow, &settings))
-        .await
-        .map_err(|error| error.to_string())?;
+    let result =
+        tauri::async_runtime::spawn_blocking(move || execute_workflow_nodes(&workflow, &settings))
+            .await
+            .map_err(|error| error.to_string())?;
 
     match &result {
         Ok(()) => state.log_backend_event(

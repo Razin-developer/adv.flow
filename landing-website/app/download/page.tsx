@@ -235,7 +235,15 @@ export default function DownloadPage() {
           </p>
           <div className="list-stack">
             <div className="list-row"><span className="check-badge"><Check size={14} /></span>Windows: just run the installer or setup file.</div>
-            <div className="list-row"><span className="check-badge"><Check size={14} /></span>Ubuntu: install the app, then add the CLI to PATH if needed.</div>
+            <div className="list-row linux-note">
+              <span className="check-badge">
+                <Check size={14} />
+              </span>
+              <div>
+                Ubuntu: install the app, then add the CLI to PATH if needed.
+                <TerminalCommand command="sudo apt install ./advflow-linux-x64.deb" />
+              </div>
+            </div>
             <div className="list-row macos-note">
               <span className="check-badge"><Check size={14} /></span>
               <div>

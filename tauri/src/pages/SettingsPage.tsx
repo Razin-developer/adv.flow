@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Save } from "lucide-react";
+import { List, Save } from "lucide-react";
 import AppShell from "@/components/AppShell";
 import { useAppDialog } from "@/components/AppDialog";
 import { BROWSERS, PLUGINS } from "@/lib/plugins";
@@ -10,12 +10,14 @@ import type { AppSettings } from "@/types/settings";
 export default function SettingsPage({
   settings,
   onSaveSettings,
+  onOpenMacroList,
   onTestMongo,
   onSyncLocalToMongo,
   onSyncMongoToLocal,
 }: {
   settings: AppSettings;
   onSaveSettings: (settings: AppSettings) => Promise<void>;
+  onOpenMacroList: () => void;
   onTestMongo: () => Promise<string>;
   onSyncLocalToMongo: () => Promise<string>;
   onSyncMongoToLocal: () => Promise<string>;
@@ -190,6 +192,13 @@ export default function SettingsPage({
               <h2>Execution</h2>
               <p>Defaults for save cadence, timeouts, and graph concurrency.</p>
             </div>
+          </div>
+
+          <div className="settings-actions">
+            <button className="secondary-action" type="button" onClick={onOpenMacroList}>
+              <List size={14} />
+              Macros list
+            </button>
           </div>
 
           <div className="setting-row">

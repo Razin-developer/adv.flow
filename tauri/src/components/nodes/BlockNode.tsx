@@ -7,6 +7,11 @@ const LABELS: Record<string, string> = {
   openApp: 'Open App',
   runCommand: 'Run Command',
   openBrowser: 'Open Browser',
+  macroKeyCombo: 'Key Combo',
+  macroTypeText: 'Type Text',
+  macroMouseClick: 'Mouse Click',
+  macroMoveMouse: 'Move Mouse',
+  macroScroll: 'Scroll',
   delay: 'Delay',
 };
 

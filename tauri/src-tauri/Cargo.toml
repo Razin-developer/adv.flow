@@ -31,3 +31,6 @@ futures-util = "0.3"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tauri-plugin-global-shortcut = "2.3.1"
+active-win-pos-rs = "0.10.1"
+enigo = "0.6.1"

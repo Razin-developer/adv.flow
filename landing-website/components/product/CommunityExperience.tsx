@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Bookmark, ChevronDown, ChevronUp, ImagePlus, MessageCircle, Send, Sparkles } from "lucide-react";
+import { Bookmark, ChevronDown, ChevronUp, ImagePlus, MessageCircle, Search, Send, Sparkles, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import ProductShell from "@/components/product/ProductShell";
 import { communityTags, type CommentNode, type CommunityTag } from "@/data/product-system";
@@ -88,8 +88,8 @@ export default function CommunityExperience() {
   return (
     <ProductShell
       eyebrow="Community"
-      title="Discuss, debug, and share automations with the Advflow community."
-      description="A Reddit-style workspace for workflow showcases, macro recipes, bug reports, ideas, docs references, and feature discussion."
+      title="Share workflows, ask questions, and improve automations together."
+      description="A focused community space for workflow showcases, macro recipes, bug reports, product ideas, docs references, and practical implementation help."
       aside={
         <>
           <div className="aside-panel">
@@ -111,6 +111,24 @@ export default function CommunityExperience() {
         </>
       }
     >
+      <section className="community-overview">
+        <div>
+          <span>Community pulse</span>
+          <strong>{rawPosts.length}</strong>
+          <p>Active posts across workflows, macros, bugs, ideas, and showcases.</p>
+        </div>
+        <div>
+          <span>Bookmarked</span>
+          <strong>{bookmarks.length}</strong>
+          <p>Saved discussions stay close while you refine your own flows.</p>
+        </div>
+        <div>
+          <span>Focus</span>
+          <strong>Practical</strong>
+          <p>Every post can point back to features and docs for faster answers.</p>
+        </div>
+      </section>
+
       <section className="composer-card">
         <div className="composer-head">
           <div className="avatar">YO</div>
@@ -155,23 +173,32 @@ export default function CommunityExperience() {
         </form>
       </section>
 
-      <div className="discussion-toolbar">
-        <div className="segmented-control">
-          {(["Top", "New", "Trending"] as const).map((mode) => (
-            <button className={sort === mode ? "active" : ""} type="button" onClick={() => setSort(mode)} key={mode}>
-              {mode}
+      <div className="feed-panel">
+        <div className="discussion-toolbar">
+          <div className="feed-title">
+            <Users size={18} />
+            <strong>Community feed</strong>
+          </div>
+          <div className="segmented-control">
+            {(["Top", "New", "Trending"] as const).map((mode) => (
+              <button className={sort === mode ? "active" : ""} type="button" onClick={() => setSort(mode)} key={mode}>
+                {mode}
+              </button>
+            ))}
+          </div>
+          <div className="feed-search">
+            <Search size={16} />
+            <input onChange={(event) => setQuery(event.target.value)} placeholder="Filter posts..." aria-label="Filter community posts" />
+          </div>
+        </div>
+
+        <div className="tag-row">
+          {(["All", ...communityTags] as const).map((item) => (
+            <button className={tag === item ? "active" : ""} type="button" onClick={() => setTag(item)} key={item}>
+              {item}
             </button>
           ))}
         </div>
-        <input onChange={(event) => setQuery(event.target.value)} placeholder="Filter posts..." aria-label="Filter community posts" />
-      </div>
-
-      <div className="tag-row">
-        {(["All", ...communityTags] as const).map((item) => (
-          <button className={tag === item ? "active" : ""} type="button" onClick={() => setTag(item)} key={item}>
-            {item}
-          </button>
-        ))}
       </div>
 
       {(loading || error) && (

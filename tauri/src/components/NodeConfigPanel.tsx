@@ -200,6 +200,69 @@ export default function NodeConfigPanel({ node, onChange }: NodeConfigPanelProps
           </>
         ) : null}
 
+        {node.data.type === 'macroKeyCombo' ? (
+          <label className="field">
+            <span>Key combo</span>
+            <input value={node.data.combo || ''} onChange={(event) => updateField('combo', event.target.value)} placeholder="Alt+Left" />
+          </label>
+        ) : null}
+
+        {node.data.type === 'macroTypeText' ? (
+          <label className="field">
+            <span>Text</span>
+            <textarea value={node.data.text || ''} onChange={(event) => updateField('text', event.target.value)} rows={4} />
+          </label>
+        ) : null}
+
+        {node.data.type === 'macroMouseClick' ? (
+          <label className="field">
+            <span>Button</span>
+            <select value={node.data.button || 'left'} onChange={(event) => updateField('button', event.target.value)}>
+              <option value="left">Left</option>
+              <option value="middle">Middle</option>
+              <option value="right">Right</option>
+            </select>
+          </label>
+        ) : null}
+
+        {node.data.type === 'macroMoveMouse' ? (
+          <>
+            <div className="setting-row">
+              <label className="field">
+                <span>X</span>
+                <input type="number" value={node.data.x ?? 0} onChange={(event) => updateField('x', Number(event.target.value))} />
+              </label>
+              <label className="field">
+                <span>Y</span>
+                <input type="number" value={node.data.y ?? 0} onChange={(event) => updateField('y', Number(event.target.value))} />
+              </label>
+            </div>
+            <label className="field">
+              <span>Coordinate</span>
+              <select value={node.data.coordinate || 'absolute'} onChange={(event) => updateField('coordinate', event.target.value)}>
+                <option value="absolute">Absolute</option>
+                <option value="relative">Relative</option>
+              </select>
+            </label>
+          </>
+        ) : null}
+
+        {node.data.type === 'macroScroll' ? (
+          <>
+            <label className="field">
+              <span>Amount</span>
+              <input type="number" value={node.data.amount ?? 3} onChange={(event) => updateField('amount', Number(event.target.value))} />
+            </label>
+            <label className="field">
+              <span>Axis</span>
+              <select value={node.data.axis || 'vertical'} onChange={(event) => updateField('axis', event.target.value)}>
+                <option value="vertical">Vertical</option>
+                <option value="horizontal">Horizontal</option>
+              </select>
+            </label>
+          </>
+        ) : null}
+
         {node.data.type === 'delay' ? (
           <>
             <label className="field">

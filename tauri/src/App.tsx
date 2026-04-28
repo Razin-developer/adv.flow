@@ -67,6 +67,7 @@ function AppRouter() {
       document.documentElement.dataset.systemAppearance = String(data.useSystemAppearance);
       if (data.syncOnOpen && data.storageMode === "mongodb") {
         await invoke("sync_mongodb_workflows_to_local");
+        await invoke("refresh_macro_shortcuts");
       }
     } finally {
       setLoadingSettings(false);
@@ -86,6 +87,8 @@ function AppRouter() {
         kind: "desktop",
         tags: payload?.tags || [],
         favorite: payload?.favorite || false,
+        shortcut: payload?.shortcut || "",
+        targetApp: payload?.targetApp || "",
         nodes: payload?.nodes || [],
         edges: payload?.edges || [],
       },
@@ -96,6 +99,7 @@ function AppRouter() {
 
   async function handleDuplicateWorkflow(id: string) {
     await invoke("duplicate_workflow", { id });
+    await invoke("refresh_macro_shortcuts");
     await loadWorkflows();
     await dialog.success("Workflow duplicated", "A copy was added to your library.");
   }
@@ -111,6 +115,7 @@ function AppRouter() {
     }
 
     await invoke("delete_workflow", { id });
+    await invoke("refresh_macro_shortcuts");
     await loadWorkflows();
     await dialog.info("Workflow deleted", "The workflow was removed.");
   }
@@ -180,6 +185,7 @@ function AppRouter() {
           element={
             <SettingsPage
               settings={settings}
+              onOpenMacroList={() => navigate("/workflows")}
               onSaveSettings={handleSaveSettings}
               onTestMongo={async () => invoke<string>("test_mongodb_connection")}
               onSyncLocalToMongo={async () => {
@@ -189,6 +195,7 @@ function AppRouter() {
               onSyncMongoToLocal={async () => {
                 const count = await invoke<number>("sync_mongodb_workflows_to_local");
                 await loadWorkflows();
+                await invoke("refresh_macro_shortcuts");
                 return `Pulled ${count} MongoDB workflows into local storage.`;
               }}
             />

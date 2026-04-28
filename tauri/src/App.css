@@ -630,6 +630,8 @@ a {
 .setting-field textarea,
 .builder-title,
 .builder-description,
+.builder-shortcut,
+.builder-target-app,
 .builder-tags,
 .field input,
 .field select,
@@ -728,6 +730,12 @@ a {
   gap: 8px;
 }
 
+.builder-trigger-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.7fr) minmax(220px, 1fr);
+  gap: 8px;
+}
+
 .builder-title {
   border: none;
   background: transparent;
@@ -741,6 +749,11 @@ a {
 
 .builder-description {
   height: 38px;
+}
+
+.builder-shortcut,
+.builder-target-app {
+  height: 34px;
 }
 
 .builder-actions {
