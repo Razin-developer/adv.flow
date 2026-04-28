@@ -5,7 +5,7 @@ on:
     branches:
       - main
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
 
 jobs:
@@ -113,9 +113,19 @@ jobs:
         run: |
           mkdir -p release-assets
 
-          if [ -d "tauri/src-tauri/target/release/bundle" ]; then
-            find tauri/src-tauri/target/release/bundle -type f -exec cp {} release-assets/ \;
-          fi
+          echo "Finding Tauri bundle files..."
+
+          find tauri/src-tauri/target/release/bundle -type f \( \
+            -name "*.dmg" -o \
+            -name "*.app.tar.gz" -o \
+            -name "*.deb" -o \
+            -name "*.rpm" -o \
+            -name "*.AppImage" -o \
+            -name "*.msi" -o \
+            -name "*.exe" -o \
+            -name "*.zip" -o \
+            -name "*.tar.gz" \
+          \) -exec cp {} release-assets/ \; 2>/dev/null || true
 
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             cp tauri/src-tauri/target/release/advflow-cli.exe release-assets/advflow-cli-windows.exe || true
@@ -130,7 +140,8 @@ jobs:
             cp tauri/src-tauri/target/release/advflow-cli release-assets/advflow-cli-macos || true
           fi
 
-          ls -la release-assets || true
+          echo "Release assets:"
+          ls -lah release-assets || true
 
       - name: Upload Build Artifacts
         if: always()
@@ -160,7 +171,7 @@ jobs:
           mkdir -p final-assets
           find all-assets -type f -exec cp {} final-assets/ \;
           echo "Final release assets:"
-          ls -la final-assets
+          ls -lah final-assets
 
       - name: Set Release Info
         id: release_info
@@ -181,7 +192,7 @@ jobs:
         with:
           tag_name: ${{ steps.release_info.outputs.tag }}
           name: ${{ steps.release_info.outputs.name }}
-          body: 'Automated AdvFlow release with macOS, Windows, and Linux builds.'
+          body: "Automated AdvFlow release with macOS, Windows, and Linux builds."
           draft: true
           prerelease: false
           files: final-assets/*
